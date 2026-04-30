@@ -150,7 +150,14 @@ static Int32 _MainLoop_iDisk=0;
 static Bool _MainLoop_bDiskInserted=FALSE;
 #endif
 Char _RomName[256];
-static Char _MainLoop_MenuStartDir[] = "";
+/* Browser starting directory. On real PS2 you typically want "mass:/"
+   (USB stick) or a memcard path. On PCSX2/AetherSX2/NetherSX2 the
+   "host:" device is not mapped, so an empty string here makes the
+   browser screen list nothing - which looks like a "dead" menu even
+   though everything is rendering correctly. "mass:/" is the safe
+   default that works on real PS2 and on emulators with a USB image
+   attached. Override at runtime if needed. */
+static Char _MainLoop_MenuStartDir[] = "mass:/";
 
 #if MAINLOOP_MEMCARD
 Char _SramPath[256] = "mc0:/SNESticle";
@@ -640,6 +647,19 @@ static Bool _ExecuteNes(CRenderSurface *pSurface, CMixBuffer *pMixBuffer, EmuSys
 
 #include "common/debug/dbgterm.h"
 
+/* MAINLOOP_DEBUG_GS_TEST: when defined to 1 (-DMAINLOOP_DEBUG_GS_TEST=1
+   in CFLAGS, e.g. `make MAINLOOP_DEBUG_GS_TEST=1`), MainLoopRender()
+   first paints the entire framebuffer solid red before doing anything
+   else. This is the lowest-level GS sanity check possible: if the TV
+   shows red, GS_InitGraph + GS_SetEnv + the GIF/DMA pipeline are all
+   working and any "black screen" symptom is in the menu/browser/font
+   draw path on top. If the TV is still black, the GS itself is
+   misconfigured for the current emulator/console (PMODE / DISPFB /
+   DISPLAY1). */
+#ifndef MAINLOOP_DEBUG_GS_TEST
+#define MAINLOOP_DEBUG_GS_TEST 0
+#endif
+
 void MainLoopRender()
 {
     static int __dbg_render_calls = 0;
@@ -656,6 +676,22 @@ void MainLoopRender()
 
 	static Uint32 _iFrame=0;
         static int whichdrawbuf = 0;
+
+#if MAINLOOP_DEBUG_GS_TEST
+    /* Paint the whole frame red as the first thing we do this frame.
+       Anything drawn later in this function (the green debug rect, the
+       yellow frame counter, the menu, the SNES output) will land on
+       top of this. If the TV is RED on boot, the GS pipeline works and
+       any black symptom is at the draw layer. If the TV is still
+       BLACK with this enabled, the GS pipeline itself is broken on
+       this target. */
+    GPPrimDisableZBuf();
+    PolyTexture(NULL);
+    PolyBlend(FALSE);
+    PolyColor4f(1.0f, 0.0f, 0.0f, 1.0f);
+    PolyRect(0.0f, 0.0f, MAINLOOP_SCREENWIDTH, MAINLOOP_SCREENHEIGHT);
+    PolyBlend(TRUE);
+#endif
 
     // render frame
     GPPrimDisableZBuf();
