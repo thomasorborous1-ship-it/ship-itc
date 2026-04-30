@@ -93,7 +93,7 @@ static PixelFormatT _PixelFormat_RGBA5551 =
 };
 
 
-PixelFormatT *PixelFormatGetByEnum(enum PixelFormatE eFormat)
+PixelFormatT *PixelFormatGetByEnum(PixelFormatE eFormat)
 {
 	switch (eFormat)
 	{

@@ -110,12 +110,6 @@ $(OBJ_DIR)/%.o: src/%.S | $(OBJ_DIR)
 	@echo "AS  $<"
 	@$(EE_CC) $(CFLAGS) $(INCS) -c $< -o $@
 
-# input.c esta sendo tratado como C++ no seu build atual
-$(OBJ_DIR)/platform/ps2/input/input.o: src/platform/ps2/input/input.c | $(OBJ_DIR)
-	@mkdir -p "$(dir $@)"
-	@echo "CXX $<"
-	@$(EE_CXX) -x c++ $(CXXFLAGS) $(INCS) -c $< -o $@
-
 $(TARGET): $(OBJS) | $(OBJ_DIR)
 	@echo "LD  $@"
 	@$(EE_CXX) -o $@ $(OBJS) $(LIBDIRS) $(LIBS)
