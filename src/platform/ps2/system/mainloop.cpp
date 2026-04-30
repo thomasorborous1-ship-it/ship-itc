@@ -327,6 +327,8 @@ Bool MainLoopInit()
     ProfInit(128 * 1024);
     #endif
 
+	printf("[boot] MainLoopInit: enter\n");
+
 	// initialize GS
 	GS_InitGraph(GS_NTSC,GS_NONINTERLACE);
 	dispx = MAINLOOP_DISPX;
@@ -357,15 +359,22 @@ Bool MainLoopInit()
 		pVersionInfo->BuildTime);
 	ScrPrintf("%s",  pVersionInfo->CopyRight);
 #endif
+	printf("[boot] GS_InitGraph + GS_SetEnv done\n");
+	printf("[boot] GPFifoInit + PolyInit + FontInit done\n");
+	printf("[boot] LogScreen created\n");
+
 	ScrPrintf("BootPath: %s", MainGetBootPath());
 	ScrPrintf("BootDir: %s", MainGetBootDir());
 
 	// set boot dir
 	strcpy(_MainLoop_BootDir, MainGetBootDir());
 
+	printf("[boot] _MainLoopLoadModules: enter\n");
     _MainLoopLoadModules(_MainLoop_IOPModulePaths);
+	printf("[boot] _MainLoopLoadModules: leave\n");
 
 	VramInit();
+	printf("[boot] VramInit done\n");
 
 	_SJPCMMix = new SJPCMMixBuffer(32000, TRUE);
 
@@ -394,6 +403,7 @@ Bool MainLoopInit()
     _fbTexture[1]->Alloc(256, 256,  PixelFormatGetByEnum(PIXELFORMAT_RGBA8));
     _fbTexture[0]->Clear();
     _fbTexture[1]->Clear();
+    printf("[boot] fbTextures allocated\n");
 //    printf("%08X\n", (Uint32)_fbTexture[0]->GetLinePtr(0));
 //    printf("%08X\n", _fbTexture[1].GetLinePtr(0));
 
@@ -469,13 +479,18 @@ Bool MainLoopInit()
 
 //	while (1);
 
+	printf("[boot] BrowserScreen ready\n");
+
 	// load snes palette
         _MainLoopLoadSnesPalette("mc0:/SNESticle/default.snpal");
+	printf("[boot] LoadSnesPalette done\n");
 	// load rom
 	_MainLoopExecuteFile(_pRomFile, TRUE);
+	printf("[boot] ExecuteFile done\n");
         _bMenu = _pSystem ? FALSE : TRUE;
         SjPCM_Clearbuff();
         SjPCM_Play();
+	printf("[boot] MainLoopInit: leave (bMenu=%d)\n", (int)_bMenu);
 
 /*
     if (!_WavFile.Open(_pSnesWavFileName, 32000, 16, 2))
@@ -792,6 +807,11 @@ void MainLoopRender()
 
 Bool MainLoopProcess()
 {
+    static int __dbg_proc_calls = 0;
+    if (__dbg_proc_calls < 3) {
+        printf("[boot] MainLoopProcess #%d\n", __dbg_proc_calls);
+        __dbg_proc_calls++;
+    }
     NetPlayRPCInputT NetInput;
 
     PROF_ENTER("Frame");

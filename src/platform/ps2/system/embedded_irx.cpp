@@ -15,7 +15,6 @@
        unsigned int   size_<name>_irx;
    They are included exactly once in this translation unit so the arrays
    end up as ordinary globals in the ELF. */
-#include "cdvd_irx.h"
 #include "netplay_irx.h"
 #include "sjpcm2_irx.h"
 #include "mcsave_irx.h"
@@ -27,9 +26,16 @@ struct EmbeddedEntry
     unsigned int         size;
 };
 
+/* CDVD.IRX is intentionally not embedded here. The iaddis CDVD.IRX
+   registers RPC id CDVD_IRX (0x0B001337) and CDVD_Init() in cdvd_rpc.c
+   spins forever in SifBindRpc waiting for that server. On NetherSX2
+   (and any setup where the rom-resident CDVD service is the only one
+   available) loading the custom IRX after main.cpp's cdvdInit() bound
+   to the rom-resident RPC tends to deadlock the IOP. Skipping the
+   embed lets IOPLoadModule("CDVD.IRX") fail through, so CDVD_Init()
+   never gets called and boot continues to LIBSD/SJPCM2/MCSAVE. */
 static const EmbeddedEntry s_embedded[] =
 {
-    { "CDVD.IRX",    cdvd_irx,    sizeof(cdvd_irx)    },
     { "NETPLAY.IRX", netplay_irx, sizeof(netplay_irx) },
     { "SJPCM2.IRX",  sjpcm2_irx,  sizeof(sjpcm2_irx)  },
     { "MCSAVE.IRX",  mcsave_irx,  sizeof(mcsave_irx)  },

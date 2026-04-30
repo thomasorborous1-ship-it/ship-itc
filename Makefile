@@ -84,7 +84,16 @@ CUSTOM_IRX := CDVD.IRX NETPLAY.IRX MCSAVE.IRX SJPCM2.IRX
 # IRX search paths (host:, cdrom:) used by the original code do not
 # work on emulators or stripped-down PS2 setups, so we ship these
 # modules inside the executable and load them via SifExecModuleBuffer.
-EMBED_IRX_NAMES := cdvd netplay sjpcm2 mcsave
+#
+# CDVD.IRX is intentionally NOT embedded: the iaddis custom CDVD.IRX
+# registers RPC id 0x0B001337 and CDVD_Init() in cdvd_rpc.c then spins
+# forever in SifBindRpc() waiting for that server. On NetherSX2 (and
+# any setup where the rom-resident cdvd service is the only one
+# available) loading the custom CDVD.IRX after main.cpp's cdvdInit()
+# already bound to the rom CDVD RPC tends to deadlock the IOP. Keep
+# the rom-resident cdvd path intact and just let CDVD.IRX fail to load
+# so CDVD_Init() is skipped.
+EMBED_IRX_NAMES := netplay sjpcm2 mcsave
 EMBED_HEADERS := $(patsubst %,$(EMBED_DIR)/%_irx.h,$(EMBED_IRX_NAMES))
 
 .PHONY: all clean strip list count package package-irx check-env
@@ -108,9 +117,6 @@ $(EMBED_DIR):
 # value, with internal "#ifndef __<label>__" header guards. Renaming to .h
 # lets us include each generated file exactly once into embedded_irx.cpp,
 # which keeps the array definitions as ordinary file-scope globals.
-$(EMBED_DIR)/cdvd_irx.h: $(CUSTOM_IRX_DIR)/CDVD.IRX | $(EMBED_DIR)
-	@echo "BIN2C $<"
-	@$(BIN2C) "$<" "$@" cdvd_irx
 $(EMBED_DIR)/netplay_irx.h: $(CUSTOM_IRX_DIR)/NETPLAY.IRX | $(EMBED_DIR)
 	@echo "BIN2C $<"
 	@$(BIN2C) "$<" "$@" netplay_irx
