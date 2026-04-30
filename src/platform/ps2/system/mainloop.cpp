@@ -401,27 +401,37 @@ Bool MainLoopInit()
     _MainLoopLoadModules(_MainLoop_IOPModulePaths);
 	BOOTLOG("[boot] _MainLoopLoadModules: leave\n");
 
+#if DEBUG_BOOT_SCREEN
+	/* Skip VramInit() in debug mode. VramInit allocates VRAM regions
+	   used by the regular GS pipeline and the subsequent
+	   TextureNew/TextureSetAddr/TextureUpload calls below DMA into
+	   that VRAM via GIF, which on this build path collides with the
+	   framebuffer init_scr() set up at boot. The result is the
+	   debug-screen content (every BOOTLOG line printed so far) gets
+	   partially overwritten and any further scr_printf is invisible.
+	   The downside of skipping it: the menu won't render and the SNES
+	   output texture won't be uploaded, which is fine for this debug
+	   pass - we only need to confirm MainLoopInit reaches the loop. */
+	BOOTLOG("[boot] (debug) skipping VramInit\n");
+#else
 	VramInit();
 	BOOTLOG("[boot] VramInit done\n");
+#endif
 
 	_SJPCMMix = new SJPCMMixBuffer(32000, TRUE);
+	BOOTLOG("[boot] SJPCMMixBuffer allocated\n");
 
 	#if CODE_DEBUG
     printf("MainLoopInit\n");
 	#endif
 
+#if !DEBUG_BOOT_SCREEN
 	int loop=60 * 2;
 	while (loop--)
 		WaitForNextVRstart(1);
-
-	// allocate textures
-/*	TextureNew(&_frametex[0], 256, 256, TEX_FORMAT_RGB565);
-	TextureNew(&_frametex[1], 256, 256, TEX_FORMAT_RGB565);
-	_fbTexture[0]->Set((Uint8 *)TextureGetData(&_frametex[0]), _frametex[0].uWidth, _frametex[0].uHeight, _frametex[0].uPitch, PixelFormatGetByEnum(PIXELFORMAT_BGR565));
-	_fbTexture[1].Set((Uint8 *)TextureGetData(&_frametex[1]), _frametex[1].uWidth, _frametex[1].uHeight, _frametex[1].uPitch, PixelFormatGetByEnum(PIXELFORMAT_BGR565));
-  */
-//    _fbTexture[0]->Alloc(256, 256,  PixelFormatGetByEnum(PIXELFORMAT_RGB555));
-//    _fbTexture[1].Alloc(256, 256,  PixelFormatGetByEnum(PIXELFORMAT_RGB555));
+#else
+	BOOTLOG("[boot] (debug) skipping 120x WaitForNextVRstart\n");
+#endif
 
     // create textures in main ram
     _fbTexture[0] = new CRenderSurface;
@@ -431,16 +441,19 @@ Bool MainLoopInit()
     _fbTexture[1]->Alloc(256, 256,  PixelFormatGetByEnum(PIXELFORMAT_RGBA8));
     _fbTexture[0]->Clear();
     _fbTexture[1]->Clear();
-    BOOTLOG("[boot] fbTextures allocated\n");
-//    printf("%08X\n", (Uint32)_fbTexture[0]->GetLinePtr(0));
-//    printf("%08X\n", _fbTexture[1].GetLinePtr(0));
+    BOOTLOG("[boot] fbTextures allocated/cleared\n");
 
-//    TextureNew(&_OutTex, 256, 256, GS_PSMCT16);
+#if DEBUG_BOOT_SCREEN
+	/* Skip the VRAM-touching texture allocation/upload in debug mode
+	   so init_scr's framebuffer survives. */
+	BOOTLOG("[boot] (debug) skipping TextureNew/SetAddr/Upload\n");
+#else
     // create texture in vram
     TextureNew(&_OutTex, 256, 256, GS_PSMCT32);
     TextureSetAddr(&_OutTex, TEXADDR );
 
     TextureUpload(&_OutTex, _fbTexture[0]->GetLinePtr(0));
+#endif
 #if 0
 	_MainLoopSetPalette(NESPAL_FCEU);
 #endif
@@ -516,9 +529,13 @@ Bool MainLoopInit()
 	_MainLoopExecuteFile(_pRomFile, TRUE);
 	BOOTLOG("[boot] ExecuteFile done\n");
         _bMenu = _pSystem ? FALSE : TRUE;
-        SjPCM_Clearbuff();
-        SjPCM_Play();
-	BOOTLOG("[boot] MainLoopInit: leave (bMenu=%d)\n", (int)_bMenu);
+        if (_MainLoop_bSjPCMReady)
+        {
+            SjPCM_Clearbuff();
+            SjPCM_Play();
+        }
+	BOOTLOG("[boot] MainLoopInit: leave (bMenu=%d, sjpcm=%d, mcsave=%d)\n",
+		(int)_bMenu, (int)_MainLoop_bSjPCMReady, (int)_MainLoop_bMCSaveReady);
 
 /*
     if (!_WavFile.Open(_pSnesWavFileName, 32000, 16, 2))
@@ -793,7 +810,7 @@ void MainLoopRender()
 
 
 	#if CODE_DEBUG
-	if (MCSave_WriteSync(FALSE, NULL))
+	if (_MainLoop_bMCSaveReady && MCSave_WriteSync(FALSE, NULL))
 	{
 		FontSelect(1);
 		FontColor4f(1.0, 0.0f, 0.0f, 1.0f);
@@ -1039,7 +1056,7 @@ void _MenuEnable(Bool bEnable)
 			    if (_MainLoopHasSRAM())
 			    {
 					#if MAINLOOP_MEMCARD
-					MCSave_WriteSync(1, NULL);
+					if (_MainLoop_bMCSaveReady) MCSave_WriteSync(1, NULL);
 
 					if (MemCardCheckNewCard())
 					{

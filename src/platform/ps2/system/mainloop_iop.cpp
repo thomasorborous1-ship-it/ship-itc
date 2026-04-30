@@ -253,6 +253,9 @@ Char *_MainLoop_IOPModulePaths[]=
     NULL
 };
 
+Bool _MainLoop_bSjPCMReady = FALSE;
+Bool _MainLoop_bMCSaveReady = FALSE;
+
 void _MainLoopLoadModules(Char **ppSearchPaths)
 {
 	Bool bLoadedNetwork;
@@ -354,8 +357,15 @@ void _MainLoopLoadModules(Char **ppSearchPaths)
     if (IOPLoadModule("SJPCM2.IRX", ppSearchPaths, 0, NULL) >= 0)
     {
         BOOTLOG("[boot] SjPCM_Init()\n");
-	    if(SjPCM_Init(0, 960*25, SJPCMMIXBUFFER_MAXENQUEUE) < 0) printf("Could not initialize SjPCM\n");
-        BOOTLOG("[boot] SjPCM_Init done\n");
+	    if (SjPCM_Init(0, 960*25, SJPCMMIXBUFFER_MAXENQUEUE) >= 0)
+	    {
+	        _MainLoop_bSjPCMReady = TRUE;
+	        BOOTLOG("[boot] SjPCM_Init done\n");
+	    }
+	    else
+	    {
+	        BOOTLOG("[boot] SjPCM_Init failed\n");
+	    }
 
     //    SjPCM_Setvol(0x3FF);
     //    SjPCM_Setvol(0);
@@ -371,6 +381,7 @@ void _MainLoopLoadModules(Char **ppSearchPaths)
     {
         BOOTLOG("[boot] MCSave_Init()\n");
         MCSave_Init(MAINLOOP_MAXSRAMSIZE);
+        _MainLoop_bMCSaveReady = TRUE;
         BOOTLOG("[boot] MCSave_Init done\n");
     }
     else
