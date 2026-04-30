@@ -22,15 +22,23 @@ IRX_DIR     ?= $(PS2SDK)/iop/irx
 # In that mode MainLoopInit() also skips its own GS_InitGraph() so the
 # debug screen survives long enough for the user to read it. Set to 0
 # for normal rendering. Override on the make line if needed.
-DEBUG_BOOT_SCREEN ?= 1
+DEBUG_BOOT_SCREEN ?= 0
+
+# MAINLOOP_DEBUG_GS_TEST: when set to 1, MainLoopRender() paints the
+# whole frame solid red as the first thing every frame. Use to confirm
+# whether the GS pipeline itself is alive (red = OK, still black = GS
+# broken). Override on the make line: `make MAINLOOP_DEBUG_GS_TEST=1`.
+MAINLOOP_DEBUG_GS_TEST ?= 0
 
 CFLAGS := -G0 -O2 -Wall \
 	-D_EE -DPS2 -DLSB_FIRST -DALIGN_DWORD -DCODE_PLATFORM=3 \
-	-DDEBUG_BOOT_SCREEN=$(DEBUG_BOOT_SCREEN)
+	-DDEBUG_BOOT_SCREEN=$(DEBUG_BOOT_SCREEN) \
+	-DMAINLOOP_DEBUG_GS_TEST=$(MAINLOOP_DEBUG_GS_TEST)
 
 CXXFLAGS := -G0 -O2 -Wall -Wno-narrowing -Wno-overflow -fno-exceptions -fno-rtti -fpermissive \
 	-D_EE -DPS2 -DLSB_FIRST -DALIGN_DWORD -DCODE_PLATFORM=3 \
-	-DDEBUG_BOOT_SCREEN=$(DEBUG_BOOT_SCREEN)
+	-DDEBUG_BOOT_SCREEN=$(DEBUG_BOOT_SCREEN) \
+	-DMAINLOOP_DEBUG_GS_TEST=$(MAINLOOP_DEBUG_GS_TEST)
 
 INCS := \
 	-I$(EMBED_DIR) \
