@@ -818,12 +818,28 @@ void MainLoopRender()
 
 
 
-//	FontColor4f(1.0, 0.0f, 0.0f, 1.0f);
-//	FontPuts(100, 100, _VersionStr);
+    /* Render-time probe: draws a coloured rectangle and a frame
+       counter at the top-left every frame, regardless of menu/system
+       state. If this is visible, the GS pipeline + GIF DMA + Font/
+       Poly system are all working and any "black screen" symptom is
+       a higher-level draw issue (BrowserScreen not painting,
+       _MainLoop_pScreen NULL, etc.). If it's NOT visible we know the
+       GS pipeline itself is broken on this target. */
+    {
+        PolyTexture(NULL);
+        PolyBlend(FALSE);
+        PolyColor4f(0.0f, 1.0f, 0.0f, 1.0f);
+        PolyRect(4.0f, 4.0f, 12.0f, 12.0f);
+        PolyBlend(TRUE);
 
-//    PolyTexture(NULL);
-//	PolyColor4f(0.0f, 1.0f, 0.0f, 1.0f);
-//	PolyRect(0, 0, 100, 50);
+        FontSelect(2);
+        FontColor4f(1.0f, 1.0f, 0.2f, 1.0f);
+        FontPrintf(20, 8, "frame=%lu bMenu=%d screen=%p sys=%p",
+                   (unsigned long)_iFrame,
+                   (int)_bMenu,
+                   _MainLoop_pScreen,
+                   _pSystem);
+    }
 
     PROF_ENTER("GPFlush");
     GPFifoFlush();
