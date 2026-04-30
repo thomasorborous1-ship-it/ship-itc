@@ -87,6 +87,8 @@ extern "C" {
 #include "cdvd_rpc.h"
 };
 
+#include "embedded_irx.h"
+
 extern "C" Int32 SNCPUExecute_ASM(SNCpuT *pCpu);
 
 
@@ -158,6 +160,28 @@ Int32 IOPLoadModule(const Char *pModuleName, Char **ppSearchPaths, int arglen, c
 {
     int ret = -1;
     char ModulePath[256];
+
+    /* If we have a copy of this module embedded in the ELF, prefer it
+       unconditionally. The host:/cdrom: search paths used by ppSearchPaths
+       are not usable on emulators (NetherSX2 etc.) or on a stripped-down
+       PS2, so falling through to SifLoadModule there is guaranteed to
+       fail with -203 ("module not found"). */
+    {
+        const unsigned char *embed_data = NULL;
+        unsigned int         embed_size = 0;
+
+        if (EmbeddedIrxFind(pModuleName, &embed_data, &embed_size) == 0)
+        {
+            ret = EmbeddedIrxLoad(embed_data, embed_size, arglen, pArgs);
+            if (ret >= 0)
+            {
+                ScrPrintf("IOP Load (embed): %s\n", pModuleName);
+                return ret;
+            }
+            /* fall through to disk-based load if the embedded copy
+               somehow refused to start. */
+        }
+    }
 
     if (ppSearchPaths)
     {

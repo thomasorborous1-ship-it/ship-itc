@@ -5,7 +5,9 @@ GSKIT  ?= $(PS2DEV)/gsKit
 SRC_DIR := $(CURDIR)/src
 OBJ_DIR := $(CURDIR)/build
 PKG_DIR := $(OBJ_DIR)/pkg
+EMBED_DIR := $(OBJ_DIR)/embed
 TARGET  := $(OBJ_DIR)/SNESticle.elf
+BIN2C   ?= $(PS2SDK)/bin/bin2c
 
 EE_CC  ?= $(shell command -v ee-gcc 2>/dev/null || command -v mips64r5900el-ps2-elf-gcc 2>/dev/null)
 EE_CXX ?= $(shell command -v ee-g++ 2>/dev/null || command -v mips64r5900el-ps2-elf-g++ 2>/dev/null)
@@ -21,6 +23,7 @@ CXXFLAGS := -G0 -O2 -Wall -Wno-narrowing -Wno-overflow -fno-exceptions -fno-rtti
 	-D_EE -DPS2 -DLSB_FIRST -DALIGN_DWORD -DCODE_PLATFORM=3
 
 INCS := \
+	-I$(EMBED_DIR) \
 	-I$(CURDIR)/src/common/media \
 	-I$(CURDIR)/src/platform/ps2/cdvd \
 	-I$(CURDIR)/src/platform/ps2/gs \
@@ -75,7 +78,14 @@ SDK_MC_IRX := mcman.irx mcserv.irx
 SDK_EXTRA_IRX := ioptrap.irx poweroff.irx
 
 CUSTOM_IRX_DIR ?= $(CURDIR)/irx
-CUSTOM_IRX := NETPLAY.IRX MCSAVE.IRX SJPCM2.IRX
+CUSTOM_IRX := CDVD.IRX NETPLAY.IRX MCSAVE.IRX SJPCM2.IRX
+
+# IRX modules embedded directly into the ELF via bin2c. The custom
+# IRX search paths (host:, cdrom:) used by the original code do not
+# work on emulators or stripped-down PS2 setups, so we ship these
+# modules inside the executable and load them via SifExecModuleBuffer.
+EMBED_IRX_NAMES := cdvd netplay sjpcm2 mcsave
+EMBED_HEADERS := $(patsubst %,$(EMBED_DIR)/%_irx.h,$(EMBED_IRX_NAMES))
 
 .PHONY: all clean strip list count package package-irx check-env
 
@@ -90,6 +100,30 @@ $(OBJ_DIR):
 
 $(PKG_DIR):
 	@mkdir -p "$(PKG_DIR)"
+
+$(EMBED_DIR):
+	@mkdir -p "$(EMBED_DIR)"
+
+# bin2c emits a .c file containing both the array definition and the size
+# value, with internal "#ifndef __<label>__" header guards. Renaming to .h
+# lets us include each generated file exactly once into embedded_irx.cpp,
+# which keeps the array definitions as ordinary file-scope globals.
+$(EMBED_DIR)/cdvd_irx.h: $(CUSTOM_IRX_DIR)/CDVD.IRX | $(EMBED_DIR)
+	@echo "BIN2C $<"
+	@$(BIN2C) "$<" "$@" cdvd_irx
+$(EMBED_DIR)/netplay_irx.h: $(CUSTOM_IRX_DIR)/NETPLAY.IRX | $(EMBED_DIR)
+	@echo "BIN2C $<"
+	@$(BIN2C) "$<" "$@" netplay_irx
+$(EMBED_DIR)/sjpcm2_irx.h: $(CUSTOM_IRX_DIR)/SJPCM2.IRX | $(EMBED_DIR)
+	@echo "BIN2C $<"
+	@$(BIN2C) "$<" "$@" sjpcm2_irx
+$(EMBED_DIR)/mcsave_irx.h: $(CUSTOM_IRX_DIR)/MCSAVE.IRX | $(EMBED_DIR)
+	@echo "BIN2C $<"
+	@$(BIN2C) "$<" "$@" mcsave_irx
+
+# embedded_irx.cpp #includes the generated headers, so make sure they
+# exist before that file is compiled.
+$(OBJ_DIR)/platform/ps2/system/embedded_irx.o: $(EMBED_HEADERS)
 
 $(OBJ_DIR)/%.o: src/%.c | $(OBJ_DIR)
 	@mkdir -p "$(dir $@)"
