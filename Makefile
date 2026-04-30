@@ -16,11 +16,21 @@ EE_STRIP ?= ee-strip
 LEGACY_ROOT ?= $(CURDIR)/vendor/legacy
 IRX_DIR     ?= $(PS2SDK)/iop/irx
 
+# DEBUG_BOOT_SCREEN: when set to 1 the EE side calls init_scr() in main()
+# and every "[boot] ..." trace point goes to scr_printf() (BIOS debug
+# font, written direct to the GS, no IOP/SIF/host: round-trip needed).
+# In that mode MainLoopInit() also skips its own GS_InitGraph() so the
+# debug screen survives long enough for the user to read it. Set to 0
+# for normal rendering. Override on the make line if needed.
+DEBUG_BOOT_SCREEN ?= 1
+
 CFLAGS := -G0 -O2 -Wall \
-	-D_EE -DPS2 -DLSB_FIRST -DALIGN_DWORD -DCODE_PLATFORM=3
+	-D_EE -DPS2 -DLSB_FIRST -DALIGN_DWORD -DCODE_PLATFORM=3 \
+	-DDEBUG_BOOT_SCREEN=$(DEBUG_BOOT_SCREEN)
 
 CXXFLAGS := -G0 -O2 -Wall -Wno-narrowing -Wno-overflow -fno-exceptions -fno-rtti -fpermissive \
-	-D_EE -DPS2 -DLSB_FIRST -DALIGN_DWORD -DCODE_PLATFORM=3
+	-D_EE -DPS2 -DLSB_FIRST -DALIGN_DWORD -DCODE_PLATFORM=3 \
+	-DDEBUG_BOOT_SCREEN=$(DEBUG_BOOT_SCREEN)
 
 INCS := \
 	-I$(EMBED_DIR) \

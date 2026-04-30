@@ -2,6 +2,23 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <debug.h>
+
+/* DEBUG_BOOT_SCREEN: when defined to 1 (-DDEBUG_BOOT_SCREEN=1 in CFLAGS),
+   redirect every "[boot] ..." trace to the BIOS debug screen via
+   scr_printf() and skip the normal GS_InitGraph() configuration so the
+   debug screen stays visible until the user can read it. When 0 the
+   traces become regular printf()s (which on emulator NetherSX2 vanish
+   into host:tty:, but on a kit / ps2link they show up). */
+#ifndef DEBUG_BOOT_SCREEN
+#define DEBUG_BOOT_SCREEN 0
+#endif
+
+#if DEBUG_BOOT_SCREEN
+#define BOOTLOG(...) do { scr_printf(__VA_ARGS__); } while (0)
+#else
+#define BOOTLOG(...) do { printf(__VA_ARGS__); } while (0)
+#endif
 #define MENU_STARTDIR _MainLoop_MenuStartDir
 #define NEWLIB_PORT_AWARE
 #include <fileio.h>
@@ -327,14 +344,25 @@ Bool MainLoopInit()
     ProfInit(128 * 1024);
     #endif
 
-	printf("[boot] MainLoopInit: enter\n");
+	BOOTLOG("[boot] MainLoopInit: enter\n");
 
+#if DEBUG_BOOT_SCREEN
+	/* In debug mode keep init_scr()'s GS configuration so all the
+	   following BOOTLOG()s remain visible on screen. Skipping
+	   GS_InitGraph here means the regular GS pipeline (gpprim/poly/
+	   font textures) is not set up, so the menu won't render, but
+	   we'll be able to see exactly which step the boot reached. */
+	BOOTLOG("[boot] (debug) skipping GS_InitGraph/SetDispMode/SetEnv\n");
+	dispx = MAINLOOP_DISPX;
+	dispy = MAINLOOP_DISPY;
+#else
 	// initialize GS
 	GS_InitGraph(GS_NTSC,GS_NONINTERLACE);
 	dispx = MAINLOOP_DISPX;
 	dispy = MAINLOOP_DISPY;
 	GS_SetDispMode(dispx,dispy, MAINLOOP_SCREENWIDTH, MAINLOOP_SCREENHEIGHT);
 	GS_SetEnv(MAINLOOP_SCREENWIDTH, MAINLOOP_SCREENHEIGHT, FB0, FB1, GS_PSMCT32, Z0, GS_PSMZ16S);
+#endif
 
 
 	GPFifoInit((Uint128 *)_MainLoop_GfxPipe, sizeof(_MainLoop_GfxPipe));
@@ -359,9 +387,9 @@ Bool MainLoopInit()
 		pVersionInfo->BuildTime);
 	ScrPrintf("%s",  pVersionInfo->CopyRight);
 #endif
-	printf("[boot] GS_InitGraph + GS_SetEnv done\n");
-	printf("[boot] GPFifoInit + PolyInit + FontInit done\n");
-	printf("[boot] LogScreen created\n");
+	BOOTLOG("[boot] GS_InitGraph + GS_SetEnv done\n");
+	BOOTLOG("[boot] GPFifoInit + PolyInit + FontInit done\n");
+	BOOTLOG("[boot] LogScreen created\n");
 
 	ScrPrintf("BootPath: %s", MainGetBootPath());
 	ScrPrintf("BootDir: %s", MainGetBootDir());
@@ -369,12 +397,12 @@ Bool MainLoopInit()
 	// set boot dir
 	strcpy(_MainLoop_BootDir, MainGetBootDir());
 
-	printf("[boot] _MainLoopLoadModules: enter\n");
+	BOOTLOG("[boot] _MainLoopLoadModules: enter\n");
     _MainLoopLoadModules(_MainLoop_IOPModulePaths);
-	printf("[boot] _MainLoopLoadModules: leave\n");
+	BOOTLOG("[boot] _MainLoopLoadModules: leave\n");
 
 	VramInit();
-	printf("[boot] VramInit done\n");
+	BOOTLOG("[boot] VramInit done\n");
 
 	_SJPCMMix = new SJPCMMixBuffer(32000, TRUE);
 
@@ -403,7 +431,7 @@ Bool MainLoopInit()
     _fbTexture[1]->Alloc(256, 256,  PixelFormatGetByEnum(PIXELFORMAT_RGBA8));
     _fbTexture[0]->Clear();
     _fbTexture[1]->Clear();
-    printf("[boot] fbTextures allocated\n");
+    BOOTLOG("[boot] fbTextures allocated\n");
 //    printf("%08X\n", (Uint32)_fbTexture[0]->GetLinePtr(0));
 //    printf("%08X\n", _fbTexture[1].GetLinePtr(0));
 
@@ -479,18 +507,18 @@ Bool MainLoopInit()
 
 //	while (1);
 
-	printf("[boot] BrowserScreen ready\n");
+	BOOTLOG("[boot] BrowserScreen ready\n");
 
 	// load snes palette
         _MainLoopLoadSnesPalette("mc0:/SNESticle/default.snpal");
-	printf("[boot] LoadSnesPalette done\n");
+	BOOTLOG("[boot] LoadSnesPalette done\n");
 	// load rom
 	_MainLoopExecuteFile(_pRomFile, TRUE);
-	printf("[boot] ExecuteFile done\n");
+	BOOTLOG("[boot] ExecuteFile done\n");
         _bMenu = _pSystem ? FALSE : TRUE;
         SjPCM_Clearbuff();
         SjPCM_Play();
-	printf("[boot] MainLoopInit: leave (bMenu=%d)\n", (int)_bMenu);
+	BOOTLOG("[boot] MainLoopInit: leave (bMenu=%d)\n", (int)_bMenu);
 
 /*
     if (!_WavFile.Open(_pSnesWavFileName, 32000, 16, 2))
@@ -809,7 +837,7 @@ Bool MainLoopProcess()
 {
     static int __dbg_proc_calls = 0;
     if (__dbg_proc_calls < 3) {
-        printf("[boot] MainLoopProcess #%d\n", __dbg_proc_calls);
+        BOOTLOG("[boot] MainLoopProcess #%d\n", __dbg_proc_calls);
         __dbg_proc_calls++;
     }
     NetPlayRPCInputT NetInput;

@@ -8,6 +8,7 @@
 #include <fileio.h>
 #include <iopheap.h>
 #include <iopcontrol.h>
+#include <debug.h>
 
 #include "types.h"
 #include "console.h"
@@ -116,7 +117,23 @@ int full_reset()
 int main(int argc, char **argv) 
 {
     int iArg;
-//    init_scr();
+#if DEBUG_BOOT_SCREEN
+	/* init_scr() configures the GS for the BIOS debug font and writes
+	   directly to the framebuffer with no IOP/SIF/host: round-trip,
+	   so it works on emulators where stdout host:tty: doesn't exist.
+	   Keep this GS configuration alive for the entire boot when
+	   DEBUG_BOOT_SCREEN is set so every scr_printf() further down is
+	   visible on screen even if some later init step hangs. The app's
+	   normal rendering path (GS_InitGraph + GS_SetEnv in MainLoopInit)
+	   is bypassed in this mode - the goal is to find the hang, not to
+	   render the menu. */
+	init_scr();
+	scr_setbgcolor(0x00000000);
+	scr_setfontcolor(0x00FFFFFF);
+	scr_clear();
+	scr_setCursor(1);
+	scr_printf("[boot] main: argc=%d argv0=%s\n", argc, (argc >= 1 && argv[0]) ? argv[0] : "<null>");
+#endif
 
 	if (argc>=1)
 	{
@@ -125,7 +142,13 @@ int main(int argc, char **argv)
 
 	MainSetBootDir(_Main_pBootPath);
 
+#if DEBUG_BOOT_SCREEN
+	scr_printf("[boot] SifInitRpc...\n");
+#endif
 	SifInitRpc(0);
+#if DEBUG_BOOT_SCREEN
+	scr_printf("[boot] SifInitRpc OK\n");
+#endif
 
 	if (_Main_pBootPath[0]=='m' && _Main_pBootPath[1]=='c')
 	{
@@ -136,7 +159,13 @@ int main(int argc, char **argv)
 	}
 
 	// initialize cdvd
+#if DEBUG_BOOT_SCREEN
+	scr_printf("[boot] cdvdInit(NOWAIT)...\n");
+#endif
     cdvdInit(CDVD_INIT_NOWAIT);
+#if DEBUG_BOOT_SCREEN
+	scr_printf("[boot] cdvdInit OK\n");
+#endif
 
     for (iArg=0; iArg < argc; iArg++)
     {
@@ -144,13 +173,27 @@ int main(int argc, char **argv)
     }
 
 	DmaReset();
+#if DEBUG_BOOT_SCREEN
+	scr_printf("[boot] DmaReset OK\n");
+#endif
 
     install_VRstart_handler();
+#if DEBUG_BOOT_SCREEN
+	scr_printf("[boot] install_VRstart_handler OK\n");
+#endif
 
 	ConInit();
+#if DEBUG_BOOT_SCREEN
+	scr_printf("[boot] ConInit OK\n");
+	scr_printf("[boot] -> MainLoopInit() ...\n");
+#endif
 
 	if (MainLoopInit())
 	{
+#if DEBUG_BOOT_SCREEN
+		scr_printf("[boot] MainLoopInit returned TRUE\n");
+		scr_printf("[boot] -> MainLoopProcess loop\n");
+#endif
 		// do stuff here
 		while (MainLoopProcess())
 		{
@@ -158,6 +201,14 @@ int main(int argc, char **argv)
 
 		MainLoopShutdown();
 	}
+#if DEBUG_BOOT_SCREEN
+	else
+	{
+		scr_printf("[boot] MainLoopInit returned FALSE!\n");
+		/* Stay on screen so the user can read the trace. */
+		while (1) { }
+	}
+#endif
 
 	ConShutdown();
 

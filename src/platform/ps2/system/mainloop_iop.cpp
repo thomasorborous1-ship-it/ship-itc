@@ -3,6 +3,17 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <debug.h>
+
+#ifndef DEBUG_BOOT_SCREEN
+#define DEBUG_BOOT_SCREEN 0
+#endif
+
+#if DEBUG_BOOT_SCREEN
+#define BOOTLOG(...) do { scr_printf(__VA_ARGS__); } while (0)
+#else
+#define BOOTLOG(...) do { printf(__VA_ARGS__); } while (0)
+#endif
 #define MENU_STARTDIR ""
 #define NEWLIB_PORT_AWARE
 #include <fileio.h>
@@ -298,9 +309,9 @@ void _MainLoopLoadModules(Char **ppSearchPaths)
 		}
 	}
 
-	printf("[boot] InitNetwork: enter\n");
+	BOOTLOG("[boot] InitNetwork: enter\n");
 	bLoadedNetwork = _MainLoopInitNetwork(ppSearchPaths);
-	printf("[boot] InitNetwork: leave (loaded=%d)\n", (int)bLoadedNetwork);
+	BOOTLOG("[boot] InitNetwork: leave (loaded=%d)\n", (int)bLoadedNetwork);
 
 	// configure network if we started it ourselves
 	if (bLoadedNetwork)
@@ -320,51 +331,51 @@ void _MainLoopLoadModules(Char **ppSearchPaths)
 	    }
 	}
 
-    printf("[boot] CDVD.IRX: try load\n");
+    BOOTLOG("[boot] CDVD.IRX: try load\n");
     if (IOPLoadModule("CDVD.IRX", ppSearchPaths, 0, NULL) >= 0)
     {
-        printf("[boot] CDVD_Init()\n");
+        BOOTLOG("[boot] CDVD_Init()\n");
         CDVD_Init();
-        printf("[boot] CDVD_Init done\n");
+        BOOTLOG("[boot] CDVD_Init done\n");
     }
     else
     {
-        printf("[boot] CDVD.IRX skipped (not available)\n");
+        BOOTLOG("[boot] CDVD.IRX skipped (not available)\n");
     }
 
-    printf("[boot] LIBSD: try load\n");
+    BOOTLOG("[boot] LIBSD: try load\n");
 	if (IOPLoadModule("rom0:LIBSD", NULL, 0, NULL) < 0)
 	{
     	IOPLoadModule("LIBSD.IRX", ppSearchPaths, 0, NULL);
 	}
-    printf("[boot] LIBSD done\n");
+    BOOTLOG("[boot] LIBSD done\n");
 
-    printf("[boot] SJPCM2.IRX: try load\n");
+    BOOTLOG("[boot] SJPCM2.IRX: try load\n");
     if (IOPLoadModule("SJPCM2.IRX", ppSearchPaths, 0, NULL) >= 0)
     {
-        printf("[boot] SjPCM_Init()\n");
+        BOOTLOG("[boot] SjPCM_Init()\n");
 	    if(SjPCM_Init(0, 960*25, SJPCMMIXBUFFER_MAXENQUEUE) < 0) printf("Could not initialize SjPCM\n");
-        printf("[boot] SjPCM_Init done\n");
+        BOOTLOG("[boot] SjPCM_Init done\n");
 
     //    SjPCM_Setvol(0x3FF);
     //    SjPCM_Setvol(0);
     }
     else
     {
-        printf("[boot] SJPCM2.IRX skipped (not available)\n");
+        BOOTLOG("[boot] SJPCM2.IRX skipped (not available)\n");
     }
 
 	#if 1
-    printf("[boot] MCSAVE.IRX: try load\n");
+    BOOTLOG("[boot] MCSAVE.IRX: try load\n");
     if (IOPLoadModule("MCSAVE.IRX", ppSearchPaths, 0, NULL) >= 0)
     {
-        printf("[boot] MCSave_Init()\n");
+        BOOTLOG("[boot] MCSave_Init()\n");
         MCSave_Init(MAINLOOP_MAXSRAMSIZE);
-        printf("[boot] MCSave_Init done\n");
+        BOOTLOG("[boot] MCSave_Init done\n");
     }
     else
     {
-        printf("[boot] MCSAVE.IRX skipped (not available)\n");
+        BOOTLOG("[boot] MCSAVE.IRX skipped (not available)\n");
     }
 	#endif
 
