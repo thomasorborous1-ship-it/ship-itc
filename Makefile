@@ -95,15 +95,20 @@ CUSTOM_IRX := CDVD.IRX NETPLAY.IRX MCSAVE.IRX SJPCM2.IRX
 # work on emulators or stripped-down PS2 setups, so we ship these
 # modules inside the executable and load them via SifExecModuleBuffer.
 #
-# CDVD.IRX is intentionally NOT embedded: the iaddis custom CDVD.IRX
-# registers RPC id 0x0B001337 and CDVD_Init() in cdvd_rpc.c then spins
-# forever in SifBindRpc() waiting for that server. On NetherSX2 (and
-# any setup where the rom-resident cdvd service is the only one
-# available) loading the custom CDVD.IRX after main.cpp's cdvdInit()
-# already bound to the rom CDVD RPC tends to deadlock the IOP. Keep
-# the rom-resident cdvd path intact and just let CDVD.IRX fail to load
-# so CDVD_Init() is skipped.
-EMBED_IRX_NAMES := netplay sjpcm2 mcsave
+# CDVD.IRX, SJPCM2.IRX and MCSAVE.IRX are intentionally NOT embedded:
+# on NetherSX2 (and likely any IOP that isn't a 100% faithful real PS2)
+# the iaddis custom IRXs do load via SifExecModuleBuffer, but their
+# RPC entry points either never come up or are incompatible with the
+# rom-resident services. The result is the EE-side init function
+# (CDVD_Init, SjPCM_Init, MCSave_Init) spinning forever in SifBindRpc
+# and deadlocking the boot. With these IRXs not embedded,
+# IOPLoadModule("...") returns < 0 and the *_Init() call is skipped,
+# so the boot proceeds (audio + memory-card save are unavailable on
+# emulator, but the menu and the SNES CPU/PPU pipeline can run).
+# NETPLAY.IRX stays embedded - it's already gated on bLoadedNetwork
+# and is only loaded when the IP stack came up (i.e. real PS2 with
+# SMAP).
+EMBED_IRX_NAMES := netplay
 EMBED_HEADERS := $(patsubst %,$(EMBED_DIR)/%_irx.h,$(EMBED_IRX_NAMES))
 
 .PHONY: all clean strip list count package package-irx check-env

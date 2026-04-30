@@ -16,8 +16,6 @@
    They are included exactly once in this translation unit so the arrays
    end up as ordinary globals in the ELF. */
 #include "netplay_irx.h"
-#include "sjpcm2_irx.h"
-#include "mcsave_irx.h"
 
 struct EmbeddedEntry
 {
@@ -26,19 +24,25 @@ struct EmbeddedEntry
     unsigned int         size;
 };
 
-/* CDVD.IRX is intentionally not embedded here. The iaddis CDVD.IRX
-   registers RPC id CDVD_IRX (0x0B001337) and CDVD_Init() in cdvd_rpc.c
-   spins forever in SifBindRpc waiting for that server. On NetherSX2
-   (and any setup where the rom-resident CDVD service is the only one
-   available) loading the custom IRX after main.cpp's cdvdInit() bound
-   to the rom-resident RPC tends to deadlock the IOP. Skipping the
-   embed lets IOPLoadModule("CDVD.IRX") fail through, so CDVD_Init()
-   never gets called and boot continues to LIBSD/SJPCM2/MCSAVE. */
+/* On NetherSX2 (and likely any setup whose IOP is not a fully faithful
+   real PS2) the iaddis custom IRX modules do load via
+   SifExecModuleBuffer, but their RPC entry points either never come up
+   or come up incompatibly with the rom-resident services already bound
+   by main.cpp / the BIOS. The result is the EE-side init function
+   (CDVD_Init, SjPCM_Init, MCSave_Init) spins forever in SifBindRpc and
+   the boot deadlocks. We've already observed this with CDVD.IRX, and
+   the latest boot trace shows the same hang at SJPCM2.IRX.
+
+   Drop the three custom IRXs (CDVD/SJPCM2/MCSAVE) from the embedded
+   set so IOPLoadModule("...") returns < 0 and the corresponding
+   *_Init() call is never made. The user loses audio and memory-card
+   save support on the emulator, but the boot completes and the menu
+   can render - which is what we need to validate the rest of the
+   stack. NETPLAY.IRX stays embedded; it's already gated on a
+   bLoadedNetwork flag and won't try to load on emulator. */
 static const EmbeddedEntry s_embedded[] =
 {
     { "NETPLAY.IRX", netplay_irx, sizeof(netplay_irx) },
-    { "SJPCM2.IRX",  sjpcm2_irx,  sizeof(sjpcm2_irx)  },
-    { "MCSAVE.IRX",  mcsave_irx,  sizeof(mcsave_irx)  },
 };
 
 static const char *path_basename(const char *path)
