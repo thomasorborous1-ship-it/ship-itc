@@ -343,20 +343,31 @@ Bool MainLoopInit()
 
 	BOOTLOG("[boot] MainLoopInit: enter\n");
 
-	// initialize GS (run unconditionally - we want the full pipeline
-	// to run even when DEBUG_BOOT_SCREEN is on so we can find out
-	// where the regular pipeline path hangs on the emulator)
+	/* GS pipeline init: every call below is wrapped in a
+	   BootProbeReclaim() probe in DEBUG_BOOT_SCREEN mode. After each
+	   call we re-take the GS via init_scr() and write a [probe]
+	   label. The very last [probe] label that is visible on screen
+	   is the last call that did NOT brick the GS irrecoverably. */
 	BOOTLOG("[boot] GS_InitGraph()\n");
 	GS_InitGraph(GS_NTSC,GS_NONINTERLACE);
 	BOOTLOG("[boot] GS_InitGraph done\n");
+#if DEBUG_BOOT_SCREEN
+	BootProbeReclaim("after GS_InitGraph");
+#endif
 	dispx = MAINLOOP_DISPX;
 	dispy = MAINLOOP_DISPY;
 	BOOTLOG("[boot] GS_SetDispMode()\n");
 	GS_SetDispMode(dispx,dispy, MAINLOOP_SCREENWIDTH, MAINLOOP_SCREENHEIGHT);
 	BOOTLOG("[boot] GS_SetDispMode done\n");
+#if DEBUG_BOOT_SCREEN
+	BootProbeReclaim("after GS_SetDispMode");
+#endif
 	BOOTLOG("[boot] GS_SetEnv()\n");
 	GS_SetEnv(MAINLOOP_SCREENWIDTH, MAINLOOP_SCREENHEIGHT, FB0, FB1, GS_PSMCT32, Z0, GS_PSMZ16S);
 	BOOTLOG("[boot] GS_SetEnv done\n");
+#if DEBUG_BOOT_SCREEN
+	BootProbeReclaim("after GS_SetEnv");
+#endif
 
 
 	GPFifoInit((Uint128 *)_MainLoop_GfxPipe, sizeof(_MainLoop_GfxPipe));
@@ -398,6 +409,9 @@ Bool MainLoopInit()
 	BOOTLOG("[boot] VramInit()\n");
 	VramInit();
 	BOOTLOG("[boot] VramInit done\n");
+#if DEBUG_BOOT_SCREEN
+	BootProbeReclaim("after VramInit");
+#endif
 
 	_SJPCMMix = new SJPCMMixBuffer(32000, TRUE);
 	BOOTLOG("[boot] SJPCMMixBuffer allocated\n");
@@ -406,11 +420,20 @@ Bool MainLoopInit()
     printf("MainLoopInit\n");
 	#endif
 
-	BOOTLOG("[boot] WaitForNextVRstart x120 begin\n");
-	int loop=60 * 2;
-	while (loop--)
-		WaitForNextVRstart(1);
-	BOOTLOG("[boot] WaitForNextVRstart x120 end\n");
+	/* The original code does 120 * WaitForNextVRstart(1) here to let
+	   the GS settle. On NetherSX2 VBlank interrupts may or may not
+	   fire depending on what state the GS is in - if they don't, the
+	   120-iter loop becomes an infinite hang. Reduce to 1 iter and
+	   probe before/after so we can tell which side it died on. */
+#if DEBUG_BOOT_SCREEN
+	BootProbeReclaim("before WaitForNextVRstart");
+#endif
+	BOOTLOG("[boot] WaitForNextVRstart begin\n");
+	WaitForNextVRstart(1);
+	BOOTLOG("[boot] WaitForNextVRstart end\n");
+#if DEBUG_BOOT_SCREEN
+	BootProbeReclaim("after WaitForNextVRstart");
+#endif
 
     // create textures in main ram
     _fbTexture[0] = new CRenderSurface;
@@ -426,26 +449,14 @@ Bool MainLoopInit()
     TextureNew(&_OutTex, 256, 256, GS_PSMCT32);
 	BOOTLOG("[boot] TextureSetAddr\n");
     TextureSetAddr(&_OutTex, TEXADDR );
+#if DEBUG_BOOT_SCREEN
+	BootProbeReclaim("after TextureSetAddr");
+#endif
 	BOOTLOG("[boot] TextureUpload\n");
     TextureUpload(&_OutTex, _fbTexture[0]->GetLinePtr(0));
 	BOOTLOG("[boot] TextureUpload done\n");
-
 #if DEBUG_BOOT_SCREEN
-	/* The full GS pipeline above (GS_SetEnv + VramInit +
-	   TextureUpload via GIF DMA) reconfigures the GS away from the
-	   BIOS debug screen and writes into VRAM regions that init_scr
-	   uses. Re-call init_scr() now to take over the display again so
-	   every BootStatusLog from this point on is visible.
-	
-	   This dual-init is for diagnostic purposes only - it lets us see
-	   *where* the regular pipeline (which we've already executed
-	   above) caused trouble. */
-	init_scr();
-	scr_setbgcolor(0x00000000);
-	scr_setfontcolor(0x00FFFFFF);
-	scr_clear();
-	scr_setCursor(1);
-	BootStatusLog("[boot] re-init_scr after pipeline init");
+	BootProbeReclaim("after TextureUpload");
 #endif
 #if 0
 	_MainLoopSetPalette(NESPAL_FCEU);

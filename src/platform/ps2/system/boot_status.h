@@ -17,6 +17,15 @@ extern "C" {
 
 void BootStatusLog(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
 
+/* BootProbeReclaim(): reset the BIOS debug screen (init_scr + scr_clear)
+   and print a status line. Used to verify, after each suspect GS pipeline
+   call, that the GS is still in a state where init_scr() can take it over
+   and put pixels on screen. If the screen still updates after a probe
+   labelled "after X" then step X did not break the GS irrecoverably.
+   The very last probe label that is visible on screen tells us the last
+   working step. */
+void BootProbeReclaim(const char *label);
+
 #ifdef __cplusplus
 }
 #endif

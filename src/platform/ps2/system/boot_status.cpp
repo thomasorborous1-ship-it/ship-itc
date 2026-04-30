@@ -53,6 +53,18 @@ extern "C" void BootStatusLog(const char *fmt, ...)
     (void)sy;
 }
 
+extern "C" void BootProbeReclaim(const char *label)
+{
+    /* Take the GS back over with the BIOS debug font. The previous
+       status (g_BootStatusStep) is preserved across this reset. */
+    init_scr();
+    scr_setbgcolor(0x00000000);
+    scr_setfontcolor(0x00FFFFFF);
+    scr_clear();
+    scr_setCursor(1);
+    BootStatusLog("[probe] %s", label);
+}
+
 #else /* !DEBUG_BOOT_SCREEN */
 
 extern "C" void BootStatusLog(const char *fmt, ...)
@@ -61,6 +73,11 @@ extern "C" void BootStatusLog(const char *fmt, ...)
     va_start(ap, fmt);
     vprintf(fmt, ap);
     va_end(ap);
+}
+
+extern "C" void BootProbeReclaim(const char *label)
+{
+    (void)label;
 }
 
 #endif
