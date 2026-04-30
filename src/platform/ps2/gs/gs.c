@@ -54,7 +54,18 @@ void GS_SetDispMode(int dx, int dy, int width, int height)
 {
 	 __asm__(" di ");
 
-	GS_PMODE = 0xFF61;
+	/* PMODE: bits 2-4 (CRTMD) MUST be 0b001 per the GS spec. The
+	   original iaddis value 0xFF61 had CRTMD=0 which works on real
+	   PS2 silicon (the hardware defaults CRTMD to 1 internally) but
+	   PCSX2 / NetherSX2 honour the spec strictly and treat CRTMD=0
+	   as "display disabled", giving a black screen even though all
+	   GIF DMA chains land correctly in VRAM.
+
+	   Layout: EN1<<0 | EN2<<1 | CRTMD<<2 | MMOD<<5 | AMOD<<6 |
+	           SLBG<<7 | ALP<<8.
+	   0xFF65 = EN1=1, EN2=0, CRTMD=001, MMOD=1, AMOD=1, SLBG=0,
+	           ALP=0xFF. */
+	GS_PMODE = 0xFF65;
 	//GS_SMODE2 = 0x01; /* Looks like this gets set by sceSetGSCrt */
 	GS_DISPFB1 = GS_SET_DISPFB((0 / 0x2000), (width / 64), 0, 0, 0);
 	GS_DISPLAY1 =  (((u64)((height)-1)<<44) |
