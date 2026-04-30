@@ -306,11 +306,17 @@ void _MainLoopLoadModules(Char **ppSearchPaths)
 		_MainLoopConfigureNetwork(_MainLoop_NetConfigPaths, (char *)"ipconfig.dat");
 	}
 
-	// load netplay module
-    if (IOPLoadModule("NETPLAY.IRX", ppSearchPaths, 0, NULL) >= 0)
-    {
-        NetPlayInit((void *)_MainLoopNetCallback);
-    }
+	// load netplay module - only if the network IRX stack actually
+	// came up. NETPLAY.IRX talks to PS2IP at startup, so loading it
+	// without the IP stack hangs the IOP boot on emulators where
+	// SMAP/PS2IP are unavailable.
+	if (bLoadedNetwork)
+	{
+	    if (IOPLoadModule("NETPLAY.IRX", ppSearchPaths, 0, NULL) >= 0)
+	    {
+	        NetPlayInit((void *)_MainLoopNetCallback);
+	    }
+	}
 
     if (IOPLoadModule("CDVD.IRX", ppSearchPaths, 0, NULL) >= 0)
     {
