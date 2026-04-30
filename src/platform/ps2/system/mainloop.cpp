@@ -343,23 +343,20 @@ Bool MainLoopInit()
 
 	BOOTLOG("[boot] MainLoopInit: enter\n");
 
-#if DEBUG_BOOT_SCREEN
-	/* In debug mode keep init_scr()'s GS configuration so all the
-	   following BOOTLOG()s remain visible on screen. Skipping
-	   GS_InitGraph here means the regular GS pipeline (gpprim/poly/
-	   font textures) is not set up, so the menu won't render, but
-	   we'll be able to see exactly which step the boot reached. */
-	BOOTLOG("[boot] (debug) skipping GS_InitGraph/SetDispMode/SetEnv\n");
-	dispx = MAINLOOP_DISPX;
-	dispy = MAINLOOP_DISPY;
-#else
-	// initialize GS
+	// initialize GS (run unconditionally - we want the full pipeline
+	// to run even when DEBUG_BOOT_SCREEN is on so we can find out
+	// where the regular pipeline path hangs on the emulator)
+	BOOTLOG("[boot] GS_InitGraph()\n");
 	GS_InitGraph(GS_NTSC,GS_NONINTERLACE);
+	BOOTLOG("[boot] GS_InitGraph done\n");
 	dispx = MAINLOOP_DISPX;
 	dispy = MAINLOOP_DISPY;
+	BOOTLOG("[boot] GS_SetDispMode()\n");
 	GS_SetDispMode(dispx,dispy, MAINLOOP_SCREENWIDTH, MAINLOOP_SCREENHEIGHT);
+	BOOTLOG("[boot] GS_SetDispMode done\n");
+	BOOTLOG("[boot] GS_SetEnv()\n");
 	GS_SetEnv(MAINLOOP_SCREENWIDTH, MAINLOOP_SCREENHEIGHT, FB0, FB1, GS_PSMCT32, Z0, GS_PSMZ16S);
-#endif
+	BOOTLOG("[boot] GS_SetEnv done\n");
 
 
 	GPFifoInit((Uint128 *)_MainLoop_GfxPipe, sizeof(_MainLoop_GfxPipe));
@@ -398,22 +395,9 @@ Bool MainLoopInit()
     _MainLoopLoadModules(_MainLoop_IOPModulePaths);
 	BOOTLOG("[boot] _MainLoopLoadModules: leave\n");
 
-#if DEBUG_BOOT_SCREEN
-	/* Skip VramInit() in debug mode. VramInit allocates VRAM regions
-	   used by the regular GS pipeline and the subsequent
-	   TextureNew/TextureSetAddr/TextureUpload calls below DMA into
-	   that VRAM via GIF, which on this build path collides with the
-	   framebuffer init_scr() set up at boot. The result is the
-	   debug-screen content (every BOOTLOG line printed so far) gets
-	   partially overwritten and any further scr_printf is invisible.
-	   The downside of skipping it: the menu won't render and the SNES
-	   output texture won't be uploaded, which is fine for this debug
-	   pass - we only need to confirm MainLoopInit reaches the loop. */
-	BOOTLOG("[boot] (debug) skipping VramInit\n");
-#else
+	BOOTLOG("[boot] VramInit()\n");
 	VramInit();
 	BOOTLOG("[boot] VramInit done\n");
-#endif
 
 	_SJPCMMix = new SJPCMMixBuffer(32000, TRUE);
 	BOOTLOG("[boot] SJPCMMixBuffer allocated\n");
@@ -422,13 +406,11 @@ Bool MainLoopInit()
     printf("MainLoopInit\n");
 	#endif
 
-#if !DEBUG_BOOT_SCREEN
+	BOOTLOG("[boot] WaitForNextVRstart x120 begin\n");
 	int loop=60 * 2;
 	while (loop--)
 		WaitForNextVRstart(1);
-#else
-	BOOTLOG("[boot] (debug) skipping 120x WaitForNextVRstart\n");
-#endif
+	BOOTLOG("[boot] WaitForNextVRstart x120 end\n");
 
     // create textures in main ram
     _fbTexture[0] = new CRenderSurface;
@@ -440,16 +422,30 @@ Bool MainLoopInit()
     _fbTexture[1]->Clear();
     BOOTLOG("[boot] fbTextures allocated/cleared\n");
 
-#if DEBUG_BOOT_SCREEN
-	/* Skip the VRAM-touching texture allocation/upload in debug mode
-	   so init_scr's framebuffer survives. */
-	BOOTLOG("[boot] (debug) skipping TextureNew/SetAddr/Upload\n");
-#else
-    // create texture in vram
+	BOOTLOG("[boot] TextureNew(_OutTex)\n");
     TextureNew(&_OutTex, 256, 256, GS_PSMCT32);
+	BOOTLOG("[boot] TextureSetAddr\n");
     TextureSetAddr(&_OutTex, TEXADDR );
-
+	BOOTLOG("[boot] TextureUpload\n");
     TextureUpload(&_OutTex, _fbTexture[0]->GetLinePtr(0));
+	BOOTLOG("[boot] TextureUpload done\n");
+
+#if DEBUG_BOOT_SCREEN
+	/* The full GS pipeline above (GS_SetEnv + VramInit +
+	   TextureUpload via GIF DMA) reconfigures the GS away from the
+	   BIOS debug screen and writes into VRAM regions that init_scr
+	   uses. Re-call init_scr() now to take over the display again so
+	   every BootStatusLog from this point on is visible.
+	
+	   This dual-init is for diagnostic purposes only - it lets us see
+	   *where* the regular pipeline (which we've already executed
+	   above) caused trouble. */
+	init_scr();
+	scr_setbgcolor(0x00000000);
+	scr_setfontcolor(0x00FFFFFF);
+	scr_clear();
+	scr_setCursor(1);
+	BootStatusLog("[boot] re-init_scr after pipeline init");
 #endif
 #if 0
 	_MainLoopSetPalette(NESPAL_FCEU);
@@ -841,22 +837,38 @@ void MainLoopRender()
                    _pSystem);
     }
 
+    /* Render-pipeline trace points: only print on the first few frames
+       so we can see whether the very first PolyRect+FontPrintf+flush
+       cycle survives, without spamming the status row forever (the
+       per-frame counter in MainLoopProcess already proves liveness). */
+    if (_iFrame < 5)
+        BOOTLOG("[boot] render f=%lu: GPFifoFlush()\n", (unsigned long)_iFrame);
     PROF_ENTER("GPFlush");
     GPFifoFlush();
     PROF_LEAVE("GPFlush");
+    if (_iFrame < 5)
+        BOOTLOG("[boot] render f=%lu: GPFifoFlush done\n", (unsigned long)_iFrame);
 
     PROF_ENTER("WaitVBlank");
 
     if ( (_iFrame&15)==0)   _uVblankCycle = ProfCtrGetCycle();
+    if (_iFrame < 5)
+        BOOTLOG("[boot] render f=%lu: WaitForNextVRstart()\n", (unsigned long)_iFrame);
 	WaitForNextVRstart(1);
+    if (_iFrame < 5)
+        BOOTLOG("[boot] render f=%lu: WaitForNextVRstart done\n", (unsigned long)_iFrame);
     if ( (_iFrame&15)==0)   _uVblankCycle = ProfCtrGetCycle() - _uVblankCycle;
 
     PROF_LEAVE("WaitVBlank");
 
     PROF_ENTER("GSSetCrt");
+    if (_iFrame < 5)
+        BOOTLOG("[boot] render f=%lu: GS_SetCrtFB(%d)\n", (unsigned long)_iFrame, whichdrawbuf);
     GS_SetCrtFB(whichdrawbuf);
     whichdrawbuf ^= 1;
     GS_SetDrawFB(whichdrawbuf);
+    if (_iFrame < 5)
+        BOOTLOG("[boot] render f=%lu: GS_SetCrtFB done\n", (unsigned long)_iFrame);
     PROF_LEAVE("GSSetCrt");
 
     _iFrame++;
@@ -866,10 +878,11 @@ void MainLoopRender()
 Bool MainLoopProcess()
 {
     static int __dbg_proc_calls = 0;
-    if (__dbg_proc_calls < 3) {
-        BOOTLOG("[boot] MainLoopProcess #%d\n", __dbg_proc_calls);
-        __dbg_proc_calls++;
-    }
+    __dbg_proc_calls++;
+    /* Update the pinned BIOS-debug status row every frame so we can see
+       at a glance whether the EE main loop is alive (counter advancing)
+       or wedged (counter frozen). */
+    BOOTLOG("[boot] MainLoopProcess #%d\n", __dbg_proc_calls);
     NetPlayRPCInputT NetInput;
 
     PROF_ENTER("Frame");
