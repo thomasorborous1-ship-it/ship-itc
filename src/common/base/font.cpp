@@ -7,7 +7,7 @@
 #if 0
 #include "font.h"
 #else
-#include "../../../Gep/Include/ps2/font.h"
+#include "font.h"
 #endif
 #include "surface.h"
 extern "C" {

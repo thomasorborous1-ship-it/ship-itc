@@ -11,13 +11,13 @@ EE_CC  ?= $(shell command -v ee-gcc 2>/dev/null || command -v mips64r5900el-ps2-
 EE_CXX ?= $(shell command -v ee-g++ 2>/dev/null || command -v mips64r5900el-ps2-elf-g++ 2>/dev/null)
 EE_STRIP ?= ee-strip
 
-LEGACY_ROOT ?= /root/SNESticle-Beta
+LEGACY_ROOT ?= $(CURDIR)/vendor/legacy
 IRX_DIR     ?= $(PS2SDK)/iop/irx
 
 CFLAGS := -G0 -O2 -Wall \
 	-D_EE -DPS2 -DLSB_FIRST -DALIGN_DWORD -DCODE_PLATFORM=3
 
-CXXFLAGS := -G0 -O2 -Wall -fno-exceptions -fno-rtti \
+CXXFLAGS := -G0 -O2 -Wall -Wno-narrowing -Wno-overflow -fno-exceptions -fno-rtti -fpermissive \
 	-D_EE -DPS2 -DLSB_FIRST -DALIGN_DWORD -DCODE_PLATFORM=3
 
 INCS := \
@@ -40,6 +40,7 @@ INCS := \
 	-I$(LEGACY_ROOT)/Gep/Include/common/unzip \
 	-I$(LEGACY_ROOT)/SNESticle/Source/common \
 	-I$(LEGACY_ROOT)/SNESticle/Source/ps2 \
+	-I$(LEGACY_ROOT)/SNESticle/XML \
 	-I$(LEGACY_ROOT)/SNESticle/Modules/mcsave/ee \
 	-I$(LEGACY_ROOT)/SNESticle/Modules/sjpcm/ee \
 	-I$(LEGACY_ROOT)/SNESticle/Modules/netplay/Source/common \

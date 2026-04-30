@@ -464,7 +464,7 @@ Int32 SNSPCExecute_C(SNSpcT *pCpu)
 		switch (uOpcode)
 		{
 
-#include "../../XML/opspc700_c.h"
+#include "opspc700_c.h"
 
 	SNSPC_OP(0x10, 2);
 		// BPL

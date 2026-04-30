@@ -1,6 +1,6 @@
 
 
-#include "../common/sncpudefs.h"
+#include "sncpudefs.h"
 #include "ps2reg.h"
 
 
@@ -1988,7 +1988,7 @@ _WAI_SkipIRQ:
 
 
 
-#include "../../XML/op65816_mips.h"
+#include "op65816_mips.h"
 
 
 

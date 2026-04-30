@@ -687,7 +687,7 @@ Int32 SNCPUExecute_C(SNCpuT *pCpu)
 		switch (uOpcode)
 		{
 
-#include "../../XML/op65816.h"
+#include "op65816.h"
 
 
 		// addR_imm8_SEP_

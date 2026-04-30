@@ -10,7 +10,7 @@
 #include "uiMenu.h"
 #include "uiLog.h"
 #include "poly.h"
-#include "../../../Gep/Include/ps2/font.h"
+#include "font.h"
 
 extern void MainLoopRender();
 
