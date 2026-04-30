@@ -267,42 +267,63 @@ void _MainLoopLoadModules(Char **ppSearchPaths)
 
 //    IOPLoadModule("rom0:SECRMAN", NULL, 0, NULL);
 
+	BOOTLOG("[boot] rom0:XSIO2MAN: try\n");
 	if (IOPLoadModule("rom0:XSIO2MAN", NULL, 0, NULL) >= 0)
 	{
+		BOOTLOG("[boot] rom0:XSIO2MAN OK\n");
 		// use the X version of the iop libs
+		BOOTLOG("[boot] rom0:XMTAPMAN: try\n");
 	    if (IOPLoadModule("rom0:XMTAPMAN", NULL, 0, NULL) >= 0)
 		{
+			BOOTLOG("[boot] xmtapInit/xmtapPortOpen\n");
 			xmtapInit(0);
 			xmtapPortOpen(1,0);
+			BOOTLOG("[boot] xmtapInit/xmtapPortOpen done\n");
 		}
+		BOOTLOG("[boot] rom0:XPADMAN: try\n");
 	    if (IOPLoadModule("rom0:XPADMAN", NULL, 0, NULL) >= 0)
 	    {
+			BOOTLOG("[boot] xpadInit/InputInit(TRUE)\n");
 	        xpadInit(0);
 			InputInit(TRUE);
+			BOOTLOG("[boot] xpadInit/InputInit done\n");
 	    }
 
+		BOOTLOG("[boot] rom0:XMCMAN: try\n");
 	    IOPLoadModule("rom0:XMCMAN", NULL, 0, NULL);
+		BOOTLOG("[boot] rom0:XMCSERV: try\n");
 	    if (IOPLoadModule("rom0:XMCSERV", NULL, 0, NULL) >= 0)
 		{
+			BOOTLOG("[boot] MemCardInit (X)\n");
 			MemCardInit();
+			BOOTLOG("[boot] MemCardInit done (X)\n");
 			#if MAINLOOP_MEMCARD
 			MemCardCreateSave(_SramPath, _MainLoop_SaveTitle, TRUE);
 			#endif
 		}
 	} else
 	{
+		BOOTLOG("[boot] rom0:XSIO2MAN failed - falling back\n");
 		// use the regular versions
+		BOOTLOG("[boot] rom0:SIO2MAN: try\n");
 	    IOPLoadModule("rom0:SIO2MAN", NULL, 0, NULL);
+		BOOTLOG("[boot] rom0:PADMAN: try\n");
 	    if (IOPLoadModule("rom0:PADMAN", NULL, 0, NULL) >= 0)
 	    {
+			BOOTLOG("[boot] padInit/InputInit(FALSE)\n");
 	        padInit(0);
 			InputInit(FALSE);
+			BOOTLOG("[boot] padInit/InputInit done\n");
 	    }
 
+		BOOTLOG("[boot] rom0:MCMAN: try\n");
 	    IOPLoadModule("rom0:MCMAN", NULL, 0, NULL);
+		BOOTLOG("[boot] rom0:MCSERV: try\n");
 	    if (IOPLoadModule("rom0:MCSERV", NULL, 0, NULL) >= 0)
 		{
+			BOOTLOG("[boot] MemCardInit (regular)\n");
 			MemCardInit();
+			BOOTLOG("[boot] MemCardInit done (regular)\n");
 			#if MAINLOOP_MEMCARD
 			MemCardCreateSave(_SramPath, _MainLoop_SaveTitle, TRUE);
 			#endif

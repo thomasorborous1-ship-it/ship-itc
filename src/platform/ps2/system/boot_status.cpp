@@ -2,12 +2,39 @@
 #include <stdarg.h>
 #include <string.h>
 #include <debug.h>
+#include <sio.h>
 
 #ifndef DEBUG_BOOT_SCREEN
 #define DEBUG_BOOT_SCREEN 0
 #endif
 
 #include "boot_status.h"
+
+/* Mirror every BootStatusLog into the EE SIO TX FIFO. PCSX2-derived
+   emulators (incl. NetherSX2) capture SIO writes and surface them in
+   their EE console log alongside the IOP "loadmodule:" lines, which is
+   much easier to inspect than reading scr_printf output off a
+   screenshot. On a real PS2 these bytes go out the (rarely connected)
+   serial port, so this is harmless either way. */
+static int g_BootSioInited = 0;
+
+static void BootSioInitOnce(void)
+{
+    if (g_BootSioInited) return;
+    /* 8N1 @ 38400 baud is the PS2-link / pcsx2 default. */
+    sio_init(38400, 0, 0, 0, 0);
+    g_BootSioInited = 1;
+}
+
+static void BootSioPuts(const char *s)
+{
+    BootSioInitOnce();
+    while (*s)
+    {
+        sio_putc((unsigned char)*s);
+        s++;
+    }
+}
 
 #if DEBUG_BOOT_SCREEN
 
@@ -34,6 +61,10 @@ extern "C" void BootStatusLog(const char *fmt, ...)
         buf[--len] = 0;
     }
 
+    /* Mirror to SIO console (NetherSX2 / PCSX2 EE log). */
+    BootSioPuts(buf);
+    BootSioPuts("\n");
+
     /* Print to the regular flow first so we keep history above. */
     int sx = scr_getX();
     int sy = scr_getY();
@@ -55,13 +86,12 @@ extern "C" void BootStatusLog(const char *fmt, ...)
 
 extern "C" void BootProbeReclaim(const char *label)
 {
-    /* Take the GS back over with the BIOS debug font. The previous
-       status (g_BootStatusStep) is preserved across this reset. */
-    init_scr();
-    scr_setbgcolor(0x00000000);
-    scr_setfontcolor(0x00FFFFFF);
-    scr_clear();
-    scr_setCursor(1);
+    /* Originally re-called init_scr() to take the GS back over with the
+       BIOS debug font after each suspect call. That turned out to make
+       the screen WORSE on NetherSX2 (re-init_scr after GS_InitGraph
+       corrupted what was already there). Now this just logs the probe
+       label - SIO output via BootStatusLog is the primary debug
+       channel; the screen is best-effort. */
     BootStatusLog("[probe] %s", label);
 }
 
@@ -69,15 +99,26 @@ extern "C" void BootProbeReclaim(const char *label)
 
 extern "C" void BootStatusLog(const char *fmt, ...)
 {
+    char buf[160];
     va_list ap;
     va_start(ap, fmt);
-    vprintf(fmt, ap);
+    vsnprintf(buf, sizeof(buf), fmt, ap);
     va_end(ap);
+
+    /* SIO is the primary debug channel - PCSX2/NetherSX2 capture this
+       and surface it in the EE console log. */
+    BootSioPuts(buf);
+    /* Make sure we end with a newline so each log is on its own line. */
+    size_t len = strlen(buf);
+    if (len == 0 || (buf[len-1] != '\n' && buf[len-1] != '\r'))
+    {
+        BootSioPuts("\n");
+    }
 }
 
 extern "C" void BootProbeReclaim(const char *label)
 {
-    (void)label;
+    BootStatusLog("[probe] %s", label);
 }
 
 #endif

@@ -22,7 +22,7 @@ IRX_DIR     ?= $(PS2SDK)/iop/irx
 # In that mode MainLoopInit() also skips its own GS_InitGraph() so the
 # debug screen survives long enough for the user to read it. Set to 0
 # for normal rendering. Override on the make line if needed.
-DEBUG_BOOT_SCREEN ?= 0
+DEBUG_BOOT_SCREEN ?= 1
 
 CFLAGS := -G0 -O2 -Wall \
 	-D_EE -DPS2 -DLSB_FIRST -DALIGN_DWORD -DCODE_PLATFORM=3 \

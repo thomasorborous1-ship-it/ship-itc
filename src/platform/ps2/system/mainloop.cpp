@@ -351,7 +351,7 @@ Bool MainLoopInit()
 	BOOTLOG("[boot] GS_InitGraph()\n");
 	GS_InitGraph(GS_NTSC,GS_NONINTERLACE);
 	BOOTLOG("[boot] GS_InitGraph done\n");
-#if DEBUG_BOOT_SCREEN
+#if 1 /* always */
 	BootProbeReclaim("after GS_InitGraph");
 #endif
 	dispx = MAINLOOP_DISPX;
@@ -359,13 +359,13 @@ Bool MainLoopInit()
 	BOOTLOG("[boot] GS_SetDispMode()\n");
 	GS_SetDispMode(dispx,dispy, MAINLOOP_SCREENWIDTH, MAINLOOP_SCREENHEIGHT);
 	BOOTLOG("[boot] GS_SetDispMode done\n");
-#if DEBUG_BOOT_SCREEN
+#if 1 /* always */
 	BootProbeReclaim("after GS_SetDispMode");
 #endif
 	BOOTLOG("[boot] GS_SetEnv()\n");
 	GS_SetEnv(MAINLOOP_SCREENWIDTH, MAINLOOP_SCREENHEIGHT, FB0, FB1, GS_PSMCT32, Z0, GS_PSMZ16S);
 	BOOTLOG("[boot] GS_SetEnv done\n");
-#if DEBUG_BOOT_SCREEN
+#if 1 /* always */
 	BootProbeReclaim("after GS_SetEnv");
 #endif
 
@@ -409,7 +409,7 @@ Bool MainLoopInit()
 	BOOTLOG("[boot] VramInit()\n");
 	VramInit();
 	BOOTLOG("[boot] VramInit done\n");
-#if DEBUG_BOOT_SCREEN
+#if 1 /* always */
 	BootProbeReclaim("after VramInit");
 #endif
 
@@ -425,13 +425,13 @@ Bool MainLoopInit()
 	   fire depending on what state the GS is in - if they don't, the
 	   120-iter loop becomes an infinite hang. Reduce to 1 iter and
 	   probe before/after so we can tell which side it died on. */
-#if DEBUG_BOOT_SCREEN
+#if 1 /* always */
 	BootProbeReclaim("before WaitForNextVRstart");
 #endif
 	BOOTLOG("[boot] WaitForNextVRstart begin\n");
 	WaitForNextVRstart(1);
 	BOOTLOG("[boot] WaitForNextVRstart end\n");
-#if DEBUG_BOOT_SCREEN
+#if 1 /* always */
 	BootProbeReclaim("after WaitForNextVRstart");
 #endif
 
@@ -449,13 +449,13 @@ Bool MainLoopInit()
     TextureNew(&_OutTex, 256, 256, GS_PSMCT32);
 	BOOTLOG("[boot] TextureSetAddr\n");
     TextureSetAddr(&_OutTex, TEXADDR );
-#if DEBUG_BOOT_SCREEN
+#if 1 /* always */
 	BootProbeReclaim("after TextureSetAddr");
 #endif
 	BOOTLOG("[boot] TextureUpload\n");
     TextureUpload(&_OutTex, _fbTexture[0]->GetLinePtr(0));
 	BOOTLOG("[boot] TextureUpload done\n");
-#if DEBUG_BOOT_SCREEN
+#if 1 /* always */
 	BootProbeReclaim("after TextureUpload");
 #endif
 #if 0
