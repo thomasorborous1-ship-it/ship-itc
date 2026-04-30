@@ -62,8 +62,12 @@ void DbgInit(void)
     g_count = 0;
     g_inited = 1;
 
-    init_scr();
-    scr_printf("[dbgterm] init\n");
+    /* Do NOT call init_scr() / scr_printf() here. Both reinitialize the
+       GS into the simple debug-screen mode and clobber the framebuffer
+       set up by MainLoopInit -> GS_InitGraph, leaving the screen black
+       except for the "[dbgterm] init" line. The buffer-based logging
+       still works; DbgShow() is the explicit place to dump it on
+       error. */
     dbg_store("dbgterm: init");
 }
 
