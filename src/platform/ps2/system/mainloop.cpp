@@ -3,6 +3,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <debug.h>
+#include "boot_status.h"
 
 /* DEBUG_BOOT_SCREEN: when defined to 1 (-DDEBUG_BOOT_SCREEN=1 in CFLAGS),
    redirect every "[boot] ..." trace to the BIOS debug screen via
@@ -14,11 +15,7 @@
 #define DEBUG_BOOT_SCREEN 0
 #endif
 
-#if DEBUG_BOOT_SCREEN
-#define BOOTLOG(...) do { scr_printf(__VA_ARGS__); } while (0)
-#else
-#define BOOTLOG(...) do { printf(__VA_ARGS__); } while (0)
-#endif
+#define BOOTLOG(...) BootStatusLog(__VA_ARGS__)
 #define MENU_STARTDIR _MainLoop_MenuStartDir
 #define NEWLIB_PORT_AWARE
 #include <fileio.h>

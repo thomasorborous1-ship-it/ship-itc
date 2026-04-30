@@ -9,6 +9,7 @@
 #include <iopheap.h>
 #include <iopcontrol.h>
 #include <debug.h>
+#include "platform/ps2/system/boot_status.h"
 
 #include "types.h"
 #include "console.h"
@@ -132,7 +133,7 @@ int main(int argc, char **argv)
 	scr_setfontcolor(0x00FFFFFF);
 	scr_clear();
 	scr_setCursor(1);
-	scr_printf("[boot] main: argc=%d argv0=%s\n", argc, (argc >= 1 && argv[0]) ? argv[0] : "<null>");
+	BootStatusLog("[boot] main: argc=%d argv0=%s", argc, (argc >= 1 && argv[0]) ? argv[0] : "<null>");
 #endif
 
 	if (argc>=1)
@@ -143,11 +144,11 @@ int main(int argc, char **argv)
 	MainSetBootDir(_Main_pBootPath);
 
 #if DEBUG_BOOT_SCREEN
-	scr_printf("[boot] SifInitRpc...\n");
+	BootStatusLog("[boot] SifInitRpc...");
 #endif
 	SifInitRpc(0);
 #if DEBUG_BOOT_SCREEN
-	scr_printf("[boot] SifInitRpc OK\n");
+	BootStatusLog("[boot] SifInitRpc OK");
 #endif
 
 	if (_Main_pBootPath[0]=='m' && _Main_pBootPath[1]=='c')
@@ -160,11 +161,11 @@ int main(int argc, char **argv)
 
 	// initialize cdvd
 #if DEBUG_BOOT_SCREEN
-	scr_printf("[boot] cdvdInit(NOWAIT)...\n");
+	BootStatusLog("[boot] cdvdInit(NOWAIT)...");
 #endif
     cdvdInit(CDVD_INIT_NOWAIT);
 #if DEBUG_BOOT_SCREEN
-	scr_printf("[boot] cdvdInit OK\n");
+	BootStatusLog("[boot] cdvdInit OK");
 #endif
 
     for (iArg=0; iArg < argc; iArg++)
@@ -174,25 +175,25 @@ int main(int argc, char **argv)
 
 	DmaReset();
 #if DEBUG_BOOT_SCREEN
-	scr_printf("[boot] DmaReset OK\n");
+	BootStatusLog("[boot] DmaReset OK");
 #endif
 
     install_VRstart_handler();
 #if DEBUG_BOOT_SCREEN
-	scr_printf("[boot] install_VRstart_handler OK\n");
+	BootStatusLog("[boot] install_VRstart_handler OK");
 #endif
 
 	ConInit();
 #if DEBUG_BOOT_SCREEN
-	scr_printf("[boot] ConInit OK\n");
-	scr_printf("[boot] -> MainLoopInit() ...\n");
+	BootStatusLog("[boot] ConInit OK");
+	BootStatusLog("[boot] -> MainLoopInit() ...");
 #endif
 
 	if (MainLoopInit())
 	{
 #if DEBUG_BOOT_SCREEN
-		scr_printf("[boot] MainLoopInit returned TRUE\n");
-		scr_printf("[boot] -> MainLoopProcess loop\n");
+		BootStatusLog("[boot] MainLoopInit returned TRUE");
+		BootStatusLog("[boot] -> MainLoopProcess loop");
 #endif
 		// do stuff here
 		while (MainLoopProcess())
@@ -204,7 +205,7 @@ int main(int argc, char **argv)
 #if DEBUG_BOOT_SCREEN
 	else
 	{
-		scr_printf("[boot] MainLoopInit returned FALSE!\n");
+		BootStatusLog("[boot] MainLoopInit returned FALSE!");
 		/* Stay on screen so the user can read the trace. */
 		while (1) { }
 	}
