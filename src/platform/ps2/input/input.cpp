@@ -186,7 +186,7 @@ void InputPoll(void)
             padRead(_Input_PadPort[iPad][0], _Input_PadPort[iPad][1], &padStatus);
 
 #ifdef _EE
-        uData = 0xffffU ^ (((Uint32)padStatus.btns << 8) | (Uint32)padStatus.btns);
+        uData = 0xffffU ^ (Uint32)padStatus.btns;
 #else
         uData = 0;
 #endif

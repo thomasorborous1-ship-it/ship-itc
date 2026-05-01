@@ -1,6 +1,6 @@
 #include "dbgterm.h"
 
-#include <debug.h>
+/* #include <debug.h> removed by v4 */
 #include <kernel.h>
 #include <stdarg.h>
 #include <stdio.h>
@@ -37,9 +37,9 @@ static void dbg_vlog(const char *fmt, va_list ap)
 
 static void dbg_print_all(const char *title)
 {
-    init_scr();
-    scr_printf("=== %s ===\n", title ? title : "DBG");
-    scr_printf("LAST: %s\n", g_last_phase[0] ? g_last_phase : "(none)");
+    /* init_scr() removed by v4 */
+    printf("=== %s ===\n", title ? title : "DBG");
+    printf("LAST: %s\n", g_last_phase[0] ? g_last_phase : "(none)");
 
     int start = g_head - g_count;
     while (start < 0) start += DBGTERM_MAX_LINES;
@@ -48,7 +48,7 @@ static void dbg_print_all(const char *title)
     {
         int idx = (start + i) % DBGTERM_MAX_LINES;
         if (g_lines[idx][0])
-            scr_printf("%02d %s\n", i, g_lines[idx]);
+            printf("%02d %s\n", i, g_lines[idx]);
     }
 }
 
@@ -62,7 +62,7 @@ void DbgInit(void)
     g_count = 0;
     g_inited = 1;
 
-    /* Do NOT call init_scr() / scr_printf() here. Both reinitialize the
+    /* Do NOT call init_scr() / printf() here. Both reinitialize the
        GS into the simple debug-screen mode and clobber the framebuffer
        set up by MainLoopInit -> GS_InitGraph, leaving the screen black
        except for the "[dbgterm] init" line. The buffer-based logging
@@ -108,7 +108,7 @@ void DbgDumpStack(void)
     unsigned int trace[16];
     memset(trace, 0, sizeof(trace));
 
-    ps2GetStackTrace(trace, 16);
+    /* ps2GetStackTrace removed - was from debug.h */
 
     DbgLog("stack trace:");
     for (int i = 0; i < 16; i++)

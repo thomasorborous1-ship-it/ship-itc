@@ -15,7 +15,7 @@
 #define DEBUG_BOOT_SCREEN 0
 #endif
 
-#define BOOTLOG(...) BootStatusLog(__VA_ARGS__)
+#define BOOTLOG(...) do {} while(0)
 #define MENU_STARTDIR _MainLoop_MenuStartDir
 #define NEWLIB_PORT_AWARE
 #include <fileio.h>
@@ -347,37 +347,15 @@ Bool MainLoopInit()
     #if PROF_ENABLED
     ProfInit(128 * 1024);
     #endif
-
-	BOOTLOG("[boot] MainLoopInit: enter\n");
-
-	/* GS pipeline init: every call below is wrapped in a
-	   BootProbeReclaim() probe in DEBUG_BOOT_SCREEN mode. After each
-	   call we re-take the GS via init_scr() and write a [probe]
-	   label. The very last [probe] label that is visible on screen
-	   is the last call that did NOT brick the GS irrecoverably. */
 	BOOTLOG("[boot] GS_InitGraph()\n");
 	GS_InitGraph(GS_NTSC,GS_NONINTERLACE);
-	BOOTLOG("[boot] GS_InitGraph done\n");
-#if 1 /* always */
-	BootProbeReclaim("after GS_InitGraph");
-#endif
-	dispx = MAINLOOP_DISPX;
+dispx = MAINLOOP_DISPX;
 	dispy = MAINLOOP_DISPY;
 	BOOTLOG("[boot] GS_SetDispMode()\n");
 	GS_SetDispMode(dispx,dispy, MAINLOOP_SCREENWIDTH, MAINLOOP_SCREENHEIGHT);
-	BOOTLOG("[boot] GS_SetDispMode done\n");
-#if 1 /* always */
-	BootProbeReclaim("after GS_SetDispMode");
-#endif
-	BOOTLOG("[boot] GS_SetEnv()\n");
+BOOTLOG("[boot] GS_SetEnv()\n");
 	GS_SetEnv(MAINLOOP_SCREENWIDTH, MAINLOOP_SCREENHEIGHT, FB0, FB1, GS_PSMCT32, Z0, GS_PSMZ16S);
-	BOOTLOG("[boot] GS_SetEnv done\n");
-#if 1 /* always */
-	BootProbeReclaim("after GS_SetEnv");
-#endif
-
-
-	GPFifoInit((Uint128 *)_MainLoop_GfxPipe, sizeof(_MainLoop_GfxPipe));
+GPFifoInit((Uint128 *)_MainLoop_GfxPipe, sizeof(_MainLoop_GfxPipe));
     PolyInit();
     FontInit(FONT_TEX);
 
@@ -399,30 +377,17 @@ Bool MainLoopInit()
 		pVersionInfo->BuildTime);
 	ScrPrintf("%s",  pVersionInfo->CopyRight);
 #endif
-	BOOTLOG("[boot] GS_InitGraph + GS_SetEnv done\n");
-	BOOTLOG("[boot] GPFifoInit + PolyInit + FontInit done\n");
-	BOOTLOG("[boot] LogScreen created\n");
+
 
 	ScrPrintf("BootPath: %s", MainGetBootPath());
 	ScrPrintf("BootDir: %s", MainGetBootDir());
 
 	// set boot dir
 	strcpy(_MainLoop_BootDir, MainGetBootDir());
-
-	BOOTLOG("[boot] _MainLoopLoadModules: enter\n");
     _MainLoopLoadModules(_MainLoop_IOPModulePaths);
-	BOOTLOG("[boot] _MainLoopLoadModules: leave\n");
-
 	BOOTLOG("[boot] VramInit()\n");
 	VramInit();
-	BOOTLOG("[boot] VramInit done\n");
-#if 1 /* always */
-	BootProbeReclaim("after VramInit");
-#endif
-
-	_SJPCMMix = new SJPCMMixBuffer(32000, TRUE);
-	BOOTLOG("[boot] SJPCMMixBuffer allocated\n");
-
+_SJPCMMix = new SJPCMMixBuffer(32000, TRUE);
 	#if CODE_DEBUG
     printf("MainLoopInit\n");
 	#endif
@@ -432,17 +397,13 @@ Bool MainLoopInit()
 	   fire depending on what state the GS is in - if they don't, the
 	   120-iter loop becomes an infinite hang. Reduce to 1 iter and
 	   probe before/after so we can tell which side it died on. */
-#if 1 /* always */
-	BootProbeReclaim("before WaitForNextVRstart");
-#endif
-	BOOTLOG("[boot] WaitForNextVRstart begin\n");
-	WaitForNextVRstart(1);
-	BOOTLOG("[boot] WaitForNextVRstart end\n");
-#if 1 /* always */
-	BootProbeReclaim("after WaitForNextVRstart");
-#endif
-
-    // create textures in main ram
+BOOTLOG("[boot] WaitForNextVRstart begin (120 iters)\n");
+	{
+		int loop = 60 * 2;
+		while (loop--)
+			WaitForNextVRstart(1);
+	}
+// create textures in main ram
     _fbTexture[0] = new CRenderSurface;
     _fbTexture[1] = new CRenderSurface;
 
@@ -450,21 +411,10 @@ Bool MainLoopInit()
     _fbTexture[1]->Alloc(256, 256,  PixelFormatGetByEnum(PIXELFORMAT_RGBA8));
     _fbTexture[0]->Clear();
     _fbTexture[1]->Clear();
-    BOOTLOG("[boot] fbTextures allocated/cleared\n");
-
 	BOOTLOG("[boot] TextureNew(_OutTex)\n");
     TextureNew(&_OutTex, 256, 256, GS_PSMCT32);
-	BOOTLOG("[boot] TextureSetAddr\n");
     TextureSetAddr(&_OutTex, TEXADDR );
-#if 1 /* always */
-	BootProbeReclaim("after TextureSetAddr");
-#endif
-	BOOTLOG("[boot] TextureUpload\n");
-    TextureUpload(&_OutTex, _fbTexture[0]->GetLinePtr(0));
-	BOOTLOG("[boot] TextureUpload done\n");
-#if 1 /* always */
-	BootProbeReclaim("after TextureUpload");
-#endif
+TextureUpload(&_OutTex, _fbTexture[0]->GetLinePtr(0));
 #if 0
 	_MainLoopSetPalette(NESPAL_FCEU);
 #endif
@@ -530,15 +480,10 @@ Bool MainLoopInit()
 	_bMenu = FALSE;
 
 //	while (1);
-
-	BOOTLOG("[boot] BrowserScreen ready\n");
-
 	// load snes palette
         _MainLoopLoadSnesPalette("mc0:/SNESticle/default.snpal");
-	BOOTLOG("[boot] LoadSnesPalette done\n");
 	// load rom
 	_MainLoopExecuteFile(_pRomFile, TRUE);
-	BOOTLOG("[boot] ExecuteFile done\n");
         _bMenu = _pSystem ? FALSE : TRUE;
         if (_MainLoop_bSjPCMReady)
         {
@@ -657,46 +602,18 @@ static Bool _ExecuteNes(CRenderSurface *pSurface, CMixBuffer *pMixBuffer, EmuSys
    misconfigured for the current emulator/console (PMODE / DISPFB /
    DISPLAY1). */
 #ifndef MAINLOOP_DEBUG_GS_TEST
-#define MAINLOOP_DEBUG_GS_TEST 0
 #endif
 
 void MainLoopRender()
 {
-    static int __dbg_render_calls = 0;
-    __dbg_render_calls++;
-    if (__dbg_render_calls <= 20)
-    {
-        DbgLog("MainLoopRender #%d bMenu=%d black=%d screen=0x%08x system=0x%08x",
-               __dbg_render_calls,
-               (int)_bMenu,
-               (int)_MainLoop_BlackScreen,
-               (unsigned int)_MainLoop_pScreen,
-               (unsigned int)_pSystem);
-    }
-
 	static Uint32 _iFrame=0;
         static int whichdrawbuf = 0;
 
-#if MAINLOOP_DEBUG_GS_TEST
-    /* Paint the whole frame red as the first thing we do this frame.
-       Anything drawn later in this function (the green debug rect, the
-       yellow frame counter, the menu, the SNES output) will land on
-       top of this. If the TV is RED on boot, the GS pipeline works and
-       any black symptom is at the draw layer. If the TV is still
-       BLACK with this enabled, the GS pipeline itself is broken on
-       this target. */
-    GPPrimDisableZBuf();
-    PolyTexture(NULL);
-    PolyBlend(FALSE);
-    PolyColor4f(1.0f, 0.0f, 0.0f, 1.0f);
-    PolyRect(0.0f, 0.0f, MAINLOOP_SCREENWIDTH, MAINLOOP_SCREENHEIGHT);
-    PolyBlend(TRUE);
-#endif
 
     // render frame
     GPPrimDisableZBuf();
 
-	if (!_MainLoop_BlackScreen && !_bMenu)
+	if (!_MainLoop_BlackScreen)
 	{
 //		Float32 fDestColor = (_bMenu || _MainLoop_ModalCount) ? 0.10f : 0.80f;
 		Float32 fDestColor = 0.10f;
@@ -861,30 +778,7 @@ void MainLoopRender()
 
 
 
-    /* Render-time probe: draws a coloured rectangle and a frame
-       counter at the top-left every frame, regardless of menu/system
-       state. If this is visible, the GS pipeline + GIF DMA + Font/
-       Poly system are all working and any "black screen" symptom is
-       a higher-level draw issue (BrowserScreen not painting,
-       _MainLoop_pScreen NULL, etc.). If it's NOT visible we know the
-       GS pipeline itself is broken on this target. */
-    {
-        PolyTexture(NULL);
-        PolyBlend(FALSE);
-        PolyColor4f(0.0f, 1.0f, 0.0f, 1.0f);
-        PolyRect(4.0f, 4.0f, 12.0f, 12.0f);
-        PolyBlend(TRUE);
-
-        FontSelect(2);
-        FontColor4f(1.0f, 1.0f, 0.2f, 1.0f);
-        FontPrintf(20, 8, "frame=%lu bMenu=%d screen=%p sys=%p",
-                   (unsigned long)_iFrame,
-                   (int)_bMenu,
-                   _MainLoop_pScreen,
-                   _pSystem);
-    }
-
-    /* Render-pipeline trace points: only print on the first few frames
+/* Render-pipeline trace points: only print on the first few frames
        so we can see whether the very first PolyRect+FontPrintf+flush
        cycle survives, without spamming the status row forever (the
        per-frame counter in MainLoopProcess already proves liveness). */
@@ -924,12 +818,6 @@ void MainLoopRender()
 
 Bool MainLoopProcess()
 {
-    static int __dbg_proc_calls = 0;
-    __dbg_proc_calls++;
-    /* Update the pinned BIOS-debug status row every frame so we can see
-       at a glance whether the EE main loop is alive (counter advancing)
-       or wedged (counter frozen). */
-    BOOTLOG("[boot] MainLoopProcess #%d\n", __dbg_proc_calls);
     NetPlayRPCInputT NetInput;
 
     PROF_ENTER("Frame");
@@ -1159,12 +1047,7 @@ void _MenuEnable(Bool bEnable)
 	}
 }
 
-#if MAINLOOP_HISTORY
-    if (trigger & PAD_L3)
-    {
-         _MainLoopSaveHistory();
-   }
-#endif
+
 
 
 

@@ -65,7 +65,7 @@ void GS_SetDispMode(int dx, int dy, int width, int height)
 	           SLBG<<7 | ALP<<8.
 	   0xFF65 = EN1=1, EN2=0, CRTMD=001, MMOD=1, AMOD=1, SLBG=0,
 	           ALP=0xFF. */
-	GS_PMODE = 0xFF65;
+	GS_PMODE = 0xFF61;
 	//GS_SMODE2 = 0x01; /* Looks like this gets set by sceSetGSCrt */
 	GS_DISPFB1 = GS_SET_DISPFB((0 / 0x2000), (width / 64), 0, 0, 0);
 	GS_DISPLAY1 =  (((u64)((height)-1)<<44) |

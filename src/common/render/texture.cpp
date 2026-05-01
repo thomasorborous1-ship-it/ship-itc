@@ -17,31 +17,10 @@ static Uint32 _TextureLog2(Uint32 uVal)
     return n;
 }
 
-static Uint32 _TextureCalcBytes(Uint32 uWidth, Uint32 uHeight, TexFormatE eTexFormat)
-{
-    Uint32 nPixels = uWidth * uHeight;
-
-    switch (eTexFormat)
-    {
-        case 0x00:
-            return nPixels * 4;
-        case 0x02:
-            return nPixels * 2;
-        case 0x13:
-            return nPixels;
-        case 0x14:
-            return (nPixels + 1) >> 1;
-        default:
-            return 0;
-    }
-}
-
 void TextureNew(TextureT *pTexture, Uint32 uWidth, Uint32 uHeight, TexFormatE eTexFormat)
 {
     Uint32 uWidthPow2;
     Uint32 uHeightPow2;
-
-    memset(pTexture, 0, sizeof(*pTexture));
 
     pTexture->uWidth      = uWidth;
     pTexture->uHeight     = uHeight;
@@ -56,8 +35,8 @@ void TextureNew(TextureT *pTexture, Uint32 uWidth, Uint32 uHeight, TexFormatE eT
     pTexture->fInvHeight = 1.0f / (Float32)uHeightPow2;
 
     pTexture->eFilter   = 0;
-    pTexture->uPitch    = uWidthPow2;
-    pTexture->nBytes    = _TextureCalcBytes(uWidthPow2, uHeightPow2, eTexFormat);
+    pTexture->uPitch = 0;
+    pTexture->nBytes = pTexture->uPitch * uHeightPow2;
     pTexture->uVramAddr = 0;
 }
 
@@ -70,7 +49,7 @@ void TextureUpload(TextureT *pTexture, Uint8 *pData)
 {
     GPPrimUploadTexture(
         pTexture->uVramAddr,
-        pTexture->uPitch,
+        pTexture->uWidth,
         0,
         0,
         pTexture->eFormat,

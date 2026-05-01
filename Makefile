@@ -80,7 +80,7 @@ LIBDIRS := \
 
 LIBS := \
 	-lmc -lpad -lps2ip \
-	-lkernel -lfileXio -lc -lm -ldebug -lstdc++ -lgcc
+	-lkernel -lfileXio -lc -lm -lstdc++ -lgcc
 
 SRCS := $(shell tr '\n' ' ' < ok-files.txt)
 
