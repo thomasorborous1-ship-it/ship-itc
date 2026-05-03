@@ -7,7 +7,6 @@
 #include "types.h"
 #define NEWLIB_PORT_AWARE
 #include "fileio.h"
-#include "iox_stat.h"      /* FIO_S_IFDIR */
 #if 0
 #include "font.h"
 #else
@@ -462,6 +461,18 @@ static int _BrowserDread(int fd, fio_dirent_t *dirent, Bool bIsMCDir)
 	   universe of fds. Sending a `cdfs:` (or `host:`/`mass:`) fd
 	   through it returns garbage and the directory looks empty.
 	   For non-memcard paths fall back to the regular fioDread. */
+	/* Defensive zeroing: the iaddis CDVD.IRX has a memset bug in
+	   CDVD_dread (memset(dirent, 0, sizeof(dirent)) only clears
+	   4 bytes - sizeof of a pointer - so most of the stat struct
+	   carries values from the previous entry). Wipe the buffer
+	   on the EE side first so any field the IRX leaves alone is
+	   guaranteed to be 0 instead of stale. */
+#ifdef _EE
+	memset(dirent, 0, sizeof(io_dirent_t));
+#else
+	memset(dirent, 0, sizeof(fio_dirent_t));
+#endif
+
 	if (bIsMCDir && MCSave_IsInitialized())
 	{
 		return MCSave_Dread(fd, dirent);
@@ -522,11 +533,11 @@ void CBrowserScreen::SetDir(Char *pDir)
 			           cdvd_iop.c line ~742 sets it directly from the ISO 9660
 			           directory bit). Recheck that bit explicitly so the legacy
 			           IRX behaviour matches even though the SDK header dropped the
-			           macro. We also accept FIO_S_IFDIR in stat.mode for the
-			           case where a future driver follows the modern convention. */
+			           macro. The stat.mode field is left untouched by both
+			           IRX drivers (they only write addr/attr/size/hisize),
+			           so we cannot rely on FIO_S_IFDIR there. */
 			        const unsigned int kLegacyAttrSubdir = 0x10;
-			        bool bIsDir = (dirent->stat.attr & kLegacyAttrSubdir) != 0
-			                   || (dirent->stat.mode & FIO_S_IFDIR) != 0;
+			        bool bIsDir = (dirent->stat.attr & kLegacyAttrSubdir) != 0;
 
 			        if (bIsDir)
 			        {

@@ -559,7 +559,14 @@ void SnesRom::Unload()
 
 Uint32 SnesRom::GetNumExts()
 {
-	return 2;
+	/* The original iaddis SNESticle only registered .smc and .fig (the
+	   two SNES ROM extensions that were common when it was written).
+	   Modern dumps almost always come as .sfc (Super Famicom) and the
+	   older Super Wild Card dumps use .swc; without these the browser
+	   silently classifies those files as BROWSER_ENTRYTYPE_OTHER and
+	   refuses to launch them. List all four flavours so the launcher
+	   recognises the ROMs people actually have. */
+	return 4;
 }
 
 char *SnesRom::GetExtName(Uint32 uExt)
@@ -569,6 +576,10 @@ char *SnesRom::GetExtName(Uint32 uExt)
 		case 0:
 			return (char *)"smc";
 		case 1:
+			return (char *)"sfc";
+		case 2:
+			return (char *)"swc";
+		case 3:
 			return (char *)"fig";
 		default:
 			return NULL;
