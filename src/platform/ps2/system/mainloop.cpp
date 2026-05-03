@@ -2,8 +2,6 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <debug.h>
-#include "boot_status.h"
 
 /* DEBUG_BOOT_SCREEN: when defined to 1 (-DDEBUG_BOOT_SCREEN=1 in CFLAGS),
    redirect every "[boot] ..." trace to the BIOS debug screen via
@@ -157,7 +155,7 @@ Char _RomName[256];
    though everything is rendering correctly. "mass:/" is the safe
    default that works on real PS2 and on emulators with a USB image
    attached. Override at runtime if needed. */
-static Char _MainLoop_MenuStartDir[] = "mass:/";
+static Char _MainLoop_MenuStartDir[] = "";
 
 #if MAINLOOP_MEMCARD
 Char _SramPath[256] = "mc0:/SNESticle";
@@ -613,6 +611,13 @@ void MainLoopRender()
     // render frame
     GPPrimDisableZBuf();
 
+#if MAINLOOP_DEBUG_GS_TEST
+    PolyTexture(NULL);
+    PolyBlend(FALSE);
+    PolyColor4f(1.0f, 0.0f, 0.0f, 1.0f);
+    PolyRect(0, 0, MAINLOOP_SCREENWIDTH, MAINLOOP_SCREENHEIGHT);
+#endif
+
 	if (!_MainLoop_BlackScreen)
 	{
 //		Float32 fDestColor = (_bMenu || _MainLoop_ModalCount) ? 0.10f : 0.80f;
@@ -818,6 +823,7 @@ void MainLoopRender()
 
 Bool MainLoopProcess()
 {
+    { static int __d=0; if(__d<10){ printf("[diag] f=%d menu=%d blk=%d scr=%p\n",__d,(int)_bMenu,(int)_MainLoop_BlackScreen,(void*)_MainLoop_pScreen); __d++; } }
     NetPlayRPCInputT NetInput;
 
     PROF_ENTER("Frame");

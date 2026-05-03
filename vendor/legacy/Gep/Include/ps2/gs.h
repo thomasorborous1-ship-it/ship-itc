@@ -16,17 +16,17 @@
 // GS Privileged registers.
 //
 
-#define GS_PMODE	*((volatile unsigned long int*)0x12000000)
-#define GS_SMODE2	*((volatile unsigned long int*)0x12000020)
-#define GS_DISPFB1	*((volatile unsigned long int*)0x12000070)
-#define GS_DISPLAY1	*((volatile unsigned long int*)0x12000080)
-#define GS_BGCOLOUR	*((volatile unsigned long int*)0x120000E0)
+#define GS_PMODE	*((volatile u64*)0x12000000)
+#define GS_SMODE2	*((volatile u64*)0x12000020)
+#define GS_DISPFB1	*((volatile u64*)0x12000070)
+#define GS_DISPLAY1	*((volatile u64*)0x12000080)
+#define GS_BGCOLOUR	*((volatile u64*)0x120000E0)
 
 //
 // GIF registers
 //
 
-#define GIF_CTRL	*((volatile unsigned long int*)0x12001000)
+#define GIF_CTRL	*((volatile u64*)0x12001000)
 
 //
 // Misc macro's
@@ -171,30 +171,30 @@
 	((u64)(ta0) | ((u64)(aem) << 15) | ((u64)(ta1) << 32))
 
 typedef struct {
-	unsigned long NLOOP:15;
-	unsigned long EOP:1;
-	unsigned long pad1:16;
-	unsigned long pad2:14;
-	unsigned long PRE:1;
-	unsigned long PRIM:11;
-	unsigned long FLG:2;
-	unsigned long NREG:4;
-	unsigned long REGS0:4;
-	unsigned long REGS1:4;
-	unsigned long REGS2:4;
-	unsigned long REGS3:4;
-	unsigned long REGS4:4;
-	unsigned long REGS5:4;
-	unsigned long REGS6:4;
-	unsigned long REGS7:4;
-	unsigned long REGS8:4;
-	unsigned long REGS9:4;
-	unsigned long REGS10:4;
-	unsigned long REGS11:4;
-	unsigned long REGS12:4;
-	unsigned long REGS13:4;
-	unsigned long REGS14:4;
-	unsigned long REGS15:4;
+	unsigned long long NLOOP:15;
+	unsigned long long EOP:1;
+	unsigned long long pad1:16;
+	unsigned long long pad2:14;
+	unsigned long long PRE:1;
+	unsigned long long PRIM:11;
+	unsigned long long FLG:2;
+	unsigned long long NREG:4;
+	unsigned long long REGS0:4;
+	unsigned long long REGS1:4;
+	unsigned long long REGS2:4;
+	unsigned long long REGS3:4;
+	unsigned long long REGS4:4;
+	unsigned long long REGS5:4;
+	unsigned long long REGS6:4;
+	unsigned long long REGS7:4;
+	unsigned long long REGS8:4;
+	unsigned long long REGS9:4;
+	unsigned long long REGS10:4;
+	unsigned long long REGS11:4;
+	unsigned long long REGS12:4;
+	unsigned long long REGS13:4;
+	unsigned long long REGS14:4;
+	unsigned long long REGS15:4;
 } GifTag __attribute__((aligned(16)));
 
 void GS_InitGraph(int mode, int interlace); // Initialise the GS

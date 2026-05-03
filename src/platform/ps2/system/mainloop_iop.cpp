@@ -3,14 +3,13 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <debug.h>
 #include "boot_status.h"
 
 #ifndef DEBUG_BOOT_SCREEN
 #define DEBUG_BOOT_SCREEN 0
 #endif
 
-#define BOOTLOG(...) BootStatusLog(__VA_ARGS__)
+#define BOOTLOG(...) do {} while(0)
 #define MENU_STARTDIR ""
 #define NEWLIB_PORT_AWARE
 #include <fileio.h>
