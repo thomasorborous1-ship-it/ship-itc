@@ -1,6 +1,8 @@
 #include <string.h>
 #include <fcntl.h>
 #include <unistd.h>
+#define NEWLIB_PORT_AWARE
+#include "fileio.h"
 #include "types.h"
 #include "console.h"
 #include "file.h"
@@ -59,14 +61,21 @@ int _MainLoopReadBinaryData(Uint8 *pBuffer, Int32 nBufferBytes, const char *pRom
         int nBytes = 0;
         int hFile;
 
-        hFile = open(pRomFile, O_RDONLY);
+        /* Use fioOpen / fioRead / fioClose - the newlib POSIX open()
+           routes through iomanX, but the iaddis CDVD.IRX only registers
+           itself with the legacy fileio device list, so open() on a
+           cdfs:/... path returns -1. fio* talks to that legacy list
+           directly and works for cdfs:, host: and (via MCSAVE.IRX)
+           the memcards, which is the same API the original iaddis
+           SNESticle used. */
+        hFile = fioOpen(pRomFile, FIO_O_RDONLY);
         if (hFile < 0)
         {
                 return -1;
         }
 
-        nBytes = read(hFile, pBuffer, nBufferBytes);
-        close(hFile);
+        nBytes = fioRead(hFile, pBuffer, nBufferBytes);
+        fioClose(hFile);
 
         return nBytes;
 }
@@ -242,12 +251,12 @@ Bool _MainLoopExecuteFile(const char *pFileName, Bool bLoadSRAM)
 
 	// see if file exists first...
 	int hFile;
-    hFile = open(pFileName, O_RDONLY);
+    hFile = fioOpen(pFileName, FIO_O_RDONLY);
 	if (hFile < 0)
 	{
 		return FALSE;
 	}
-	close(hFile);
+	fioClose(hFile);
 
 
 	// resolve file extension of filename
