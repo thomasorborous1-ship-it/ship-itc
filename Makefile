@@ -284,6 +284,21 @@ iso-root: $(TARGET) iso-check
 		"VMODE = $(ISO_VMODE)" > "$(ISO_ROOT_DIR)/SYSTEM.CNF"
 	@echo "[iso-root] SYSTEM.CNF:"
 	@cat "$(ISO_ROOT_DIR)/SYSTEM.CNF"
+	@# Custom IRX modules. The ELF expects to find these next to itself
+	@# on the disc - the IOP loader walks _MainLoop_BootDir ("cdrom0:\")
+	@# first, so the custom CDVD/SJPCM2/MCSAVE/NETPLAY IRXs must ship
+	@# alongside the ELF. Without them IOPLoadModule returns -203 and
+	@# the corresponding subsystem (cdfs filesystem, audio, memcard
+	@# saves, netplay) is silently disabled. Only NETPLAY.IRX is also
+	@# embedded in the ELF; the others are loaded exclusively from disc.
+	@for f in $(CUSTOM_IRX); do \
+		if [ -f "$(CUSTOM_IRX_DIR)/$$f" ]; then \
+			cp -f "$(CUSTOM_IRX_DIR)/$$f" "$(ISO_ROOT_DIR)/"; \
+			echo "[iso-root] + $$f"; \
+		else \
+			echo "[iso-root] ! faltando custom IRX $$f em $(CUSTOM_IRX_DIR)"; \
+		fi; \
+	done
 	@if [ -n "$(strip $(roms))" ]; then \
 		if [ ! -d "$(roms)" ]; then \
 			echo "ERRO: pasta de ROMs nao existe: $(roms)"; \
