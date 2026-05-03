@@ -7,6 +7,7 @@
 #include "types.h"
 #define NEWLIB_PORT_AWARE
 #include "fileio.h"
+#include "iox_stat.h"      /* FIO_S_IFDIR */
 #if 0
 #include "font.h"
 #else
@@ -510,17 +511,34 @@ void CBrowserScreen::SetDir(Char *pDir)
 		   //     printf("%s %02X %d \n", 		            dirent->name, dirent->stat.attr,    dirent->stat.size		            );
 				if (strcmp((char *)dirent->name,".") && strcmp((char *)dirent->name,".."))
 				{
-#if 0
-			        eType = BROWSER_ENTRYTYPE_OTHER;
+			        /* Modern PS2SDK no longer ships FIO_ATTR_SUBDIR (it lived in
+			           the legacy fileio.h that came with iaddis SNESticle), so the
+			           original entry-type detection used to live behind `#if 0`,
+			           which left eType uninitialised and made the renderer paint
+			           every entry as BROWSER_ENTRYTYPE_DIR (yellow). The two IRX
+			           drivers we actually use - the iaddis CDVD.IRX for cdfs: and
+			           MCSAVE.IRX for mc0:/mc1: - both flag directories the same
+			           way: bit 0x10 in stat.attr (the legacy FIO_ATTR_SUBDIR value;
+			           cdvd_iop.c line ~742 sets it directly from the ISO 9660
+			           directory bit). Recheck that bit explicitly so the legacy
+			           IRX behaviour matches even though the SDK header dropped the
+			           macro. We also accept FIO_S_IFDIR in stat.mode for the
+			           case where a future driver follows the modern convention. */
+			        const unsigned int kLegacyAttrSubdir = 0x10;
+			        bool bIsDir = (dirent->stat.attr & kLegacyAttrSubdir) != 0
+			                   || (dirent->stat.mode & FIO_S_IFDIR) != 0;
 
-			        if (dirent->stat.attr & FIO_ATTR_SUBDIR)
+			        if (bIsDir)
 			        {
 			            eType = BROWSER_ENTRYTYPE_DIR;
 			        } else
 			        {
-						eType = (BrowserEntryTypeE)SendMessage(2, 0, (void *)dirent->name);
+			            /* Resolve known ROM extensions to EXECUTABLE, leave
+			               everything else as OTHER (rendered dim). */
+			            eType = (BrowserEntryTypeE)SendMessage(2, 0, (void *)dirent->name);
+			            if (eType != BROWSER_ENTRYTYPE_EXECUTABLE)
+			                eType = BROWSER_ENTRYTYPE_OTHER;
 			        }
-#endif
 			        AddEntry((char *)dirent->name, eType, dirent->stat.size);
 					/*
 					if (!(m_nEntries & 127))
