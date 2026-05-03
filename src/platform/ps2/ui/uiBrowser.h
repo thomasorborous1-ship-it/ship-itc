@@ -39,6 +39,16 @@ class CBrowserScreen : public CScreen
 	Int32 	m_iScroll;
 	Int32 	m_MaxLines;
 
+	/* When TRUE the current m_Dir lives on a memory card (mc0:/mc1:),
+	   so directory iteration must go through MCSave_Dread which works
+	   around an issue in the rom-resident fioDread for memcards.
+	   For every other device (cdfs:, host:, mass:, ...) the standard
+	   fioDread is used - routing those fds through MCSave_Dread used
+	   to silently fail because the MCSAVE.IRX RPC server only knows
+	   about its own memcard fds, which is why `cdfs:/` came up empty
+	   in the browser. */
+	Bool	m_bMCDir;
+
 	Bool	m_bSubMenu;
 	CMenuScreen m_SubMenu;
 

@@ -134,6 +134,13 @@ int main(int argc, char **argv)
 		full_reset();
 	}
 
+	/* Bind the EE-side fileio RPC client to the rom-resident FILEIO
+	   service. Without this, every fio* call (fioOpen, fioDopen,
+	   fioDread, ...) silently returns -1 because the RPC channel is
+	   not connected. The browser was therefore unable to list any
+	   files - in particular `cdfs:/` came up empty. */
+	fioInit();
+
 	// initialize cdvd
     cdvdInit(CDVD_INIT_NOWAIT);
 

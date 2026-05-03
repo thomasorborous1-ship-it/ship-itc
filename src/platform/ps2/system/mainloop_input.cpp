@@ -310,37 +310,24 @@ void _MainLoopInputProcess(Uint32 buttons)
 	{
 		if (_MainLoop_pScreen)
 		{
+		    /* L1 / R1 cycle through every available screen including
+		       the message Log. The previous hand-written chain stopped
+		       at Menu when going right and never reached Log when going
+		       left, so the Log tab was effectively unreachable from the
+		       UI. _MainLoopCycleScreen iterates Browser->Network->Menu
+		       ->Log in either direction and skips screens that aren't
+		       constructed. */
 		    if (trigger & PAD_R1)
 		    {
-				if (_MainLoop_pScreen == _MainLoop_pBrowserScreen)
-					_MainLoopSetScreen(_MainLoop_pNetworkScreen);
-				 else
-				if (_MainLoop_pScreen == _MainLoop_pNetworkScreen)
-					_MainLoopSetScreen(_MainLoop_pMenuScreen);
-				 else
-				if (_MainLoop_pScreen == _MainLoop_pMenuScreen)
-					_MainLoopSetScreen(_MainLoop_pBrowserScreen);
-				else
-					_MainLoopSetScreen(_MainLoop_pBrowserScreen);
+		        _MainLoopCycleScreen(+1);
 		    } else
-
 		    if (trigger & PAD_L1)
 		    {
-				if (_MainLoop_pScreen == _MainLoop_pBrowserScreen)
-					_MainLoopSetScreen(_MainLoop_pBrowserScreen);
-				 else
-				if (_MainLoop_pScreen == _MainLoop_pNetworkScreen)
-					_MainLoopSetScreen(_MainLoop_pBrowserScreen);
-				 else
-				if (_MainLoop_pScreen == _MainLoop_pMenuScreen)
-					_MainLoopSetScreen(_MainLoop_pNetworkScreen);
-				else
-				if (_MainLoop_pScreen == _MainLoop_pLogScreen)
-					_MainLoopSetScreen(_MainLoop_pMenuScreen);
+		        _MainLoopCycleScreen(-1);
 		    } else
-			{
-				_MainLoop_pScreen->Input(buttons, trigger);
-			}
+		    {
+		        _MainLoop_pScreen->Input(buttons, trigger);
+		    }
 		}
 
 	}

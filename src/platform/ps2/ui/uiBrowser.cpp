@@ -170,6 +170,7 @@ CBrowserScreen::CBrowserScreen(Uint32 uMaxEntries)
 	m_iSelect=0;
 	m_iScroll=0;
 	m_MaxLines = (209 / 11 - 1); // umm, hacked
+	m_bMCDir = FALSE;
 	m_bSubMenu = FALSE;
 	m_pDirEntries = new BrowserEntryT[uMaxEntries];
 
@@ -450,20 +451,21 @@ void CBrowserScreen::Input(Uint32 buttons, Uint32 trigger)
 
 
 #ifdef _EE
-static int _BrowserDread(int fd, io_dirent_t *dirent)
+static int _BrowserDread(int fd, io_dirent_t *dirent, Bool bIsMCDir)
 #else
-static int _BrowserDread(int fd, fio_dirent_t *dirent)
+static int _BrowserDread(int fd, fio_dirent_t *dirent, Bool bIsMCDir)
 #endif
 {
-	if (MCSave_IsInitialized())
+	/* MCSave_Dread is only meaningful for memcard directories: it
+	   forwards the fd to MCSAVE.IRX, which has its own private
+	   universe of fds. Sending a `cdfs:` (or `host:`/`mass:`) fd
+	   through it returns garbage and the directory looks empty.
+	   For non-memcard paths fall back to the regular fioDread. */
+	if (bIsMCDir && MCSave_IsInitialized())
 	{
-		// use safe dread
 		return MCSave_Dread(fd, dirent);
-	} else
-	{
-		// use broken one
-		return fioDread(fd, dirent);
 	}
+	return fioDread(fd, dirent);
 }
 
 
@@ -477,6 +479,9 @@ void CBrowserScreen::SetDir(Char *pDir)
 	ResetEntries();
 
 	strcpy(m_Dir, pDir);
+	/* "mc0:/..." or "mc1:/..." -> route Dread through MCSave_Dread.
+	   Anything else (cdfs:, host:, mass:, ...) goes via fioDread. */
+	m_bMCDir = (pDir[0] == 'm' && pDir[1] == 'c' && pDir[3] == ':');
 	m_iScroll = 0;
 	m_iSelect = 0;
 
@@ -498,7 +503,7 @@ void CBrowserScreen::SetDir(Char *pDir)
 			
 //			while (fioDread(fd, dirent) > 0) // && m_nEntries < 1280)
 
-			while (_BrowserDread(fd, dirent) > 0) // && m_nEntries < 1280)
+			while (_BrowserDread(fd, dirent, m_bMCDir) > 0) // && m_nEntries < 1280)
 		    {
 		        BrowserEntryTypeE eType;
 										  
