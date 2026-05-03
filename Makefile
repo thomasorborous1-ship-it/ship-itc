@@ -229,58 +229,114 @@ count:
 	@printf 'objects: %s\n' "$(words $(OBJS))"
 
 
-# ---------------- ISO (CD/DVD) ----------------
-ISO_LABEL ?= SNESTICLE
-ISO_OUT   ?= $(OBJ_DIR)/$(ISO_LABEL).iso
-ISO_DIR   ?= $(OBJ_DIR)/iso_root
-BOOT_ELF  ?= $(ISO_LABEL).ELF
-VMODE     ?= NTSC
-VER       ?= 1.00
+# ---- ISO (OPL-compatible, adapted from InfinityStation) ----
+#
+# OPL (Open PS2 Loader) exige que:
+#   1. Nome do arquivo ISO: '<GAME_ID>.<NomeBonito>.iso'
+#   2. ELF dentro da ISO chamado exatamente '<GAME_ID>' (sem extensao)
+#   3. SYSTEM.CNF com 'BOOT2 = cdrom0:\<GAME_ID>;1'
+#
+# IMPORTANTE: NAO usar -iso-level 2 ou -full-iso9660-filenames!
+# O CDVDMAN do OPL assume ISO9660 level 1 estrito com buffer de
+# 14 caracteres por entrada do TOC. Nomes longos no PVD estouram
+# o buffer e o OPL pinta a tela branca.
+#
+# -J -joliet-long adiciona um Joliet SVD com nomes originais (UCS-2)
+# para que o launcher mostre nomes bonitos. O OPL so le o PVD
+# (sector 16), entao a coexistencia e segura.
+#
+# SLUS_999.99 e um ID nao alocado pela Sony, comum em homebrew.
+# Override: make iso ISO_GAME_ID=SLPM_625.99
+#
+# Uso:
+#   make iso                          # gera ISO sem ROMs
+#   make iso roms=<pasta>             # gera ISO com ROMs
+#   make iso roms=<pasta> out=<pasta> # gera ISO + copia pra <pasta>
 
-# tenta achar uma ferramenta tipo mkisofs
-MKISOFS ?= $(shell if command -v xorriso >/dev/null 2>&1; then echo "xorriso -as mkisofs"; \
-	elif command -v genisoimage >/dev/null 2>&1; then echo "genisoimage"; \
-	elif command -v mkisofs >/dev/null 2>&1; then echo "mkisofs"; \
-	else echo "mkisofs"; fi)
+ISO_GAME_ID   ?= SLUS_999.99
+ISO_GAME_NAME ?= SNESticle
+ISO_LABEL     ?= SNESTICLE
+ISO_ROOT_DIR  ?= $(OBJ_DIR)/iso_root
+ISO_OUT       ?= $(OBJ_DIR)/$(ISO_GAME_ID).$(ISO_GAME_NAME).iso
+ISO_BOOT      ?= $(ISO_GAME_ID)
+ISO_VMODE     ?= NTSC
 
-MKISOFSFLAGS ?= -J -R -l -iso-level 2
+# User-facing knobs (lowercase)
+out  ?=
+roms ?=
 
-.PHONY: iso iso_stage iso_image
+.PHONY: iso-check iso-root iso
 
-iso: package iso_stage iso_image
-	@echo "ISO pronta: $(ISO_OUT)"
+iso-check:
+	@command -v xorriso >/dev/null 2>&1 \
+	  || command -v genisoimage >/dev/null 2>&1 \
+	  || command -v mkisofs >/dev/null 2>&1 \
+	  || { echo "ERRO: nenhum gerador de ISO encontrado (xorriso, genisoimage ou mkisofs)."; \
+	       echo "Instale com: apt install xorriso"; exit 1; }
 
-iso_stage: | $(OBJ_DIR)
-	@set -e; \
-	rm -rf "$(ISO_DIR)"; \
-	mkdir -p "$(ISO_DIR)"; \
-	echo "[ISO] copiando arquivos do pkg..."; \
-	cp -a "$(PKG_DIR)/." "$(ISO_DIR)/"; \
-		if [ -d "$(CURDIR)/cdroot" ]; then \
-			echo "[ISO] copiando cdroot extras..."; \
-			cp -a "$(CURDIR)/cdroot/." "$(ISO_DIR)/"; \
+iso-root: $(TARGET) iso-check
+	@rm -rf "$(ISO_ROOT_DIR)"
+	@mkdir -p "$(ISO_ROOT_DIR)"
+	@cp "$(TARGET)" "$(ISO_ROOT_DIR)/$(ISO_BOOT)"
+	@printf '%s\n' \
+		"BOOT2 = cdrom0:\\$(ISO_BOOT);1" \
+		"VER = 1.00" \
+		"VMODE = $(ISO_VMODE)" > "$(ISO_ROOT_DIR)/SYSTEM.CNF"
+	@echo "[iso-root] SYSTEM.CNF:"
+	@cat "$(ISO_ROOT_DIR)/SYSTEM.CNF"
+	@if [ -n "$(strip $(roms))" ]; then \
+		if [ ! -d "$(roms)" ]; then \
+			echo "ERRO: pasta de ROMs nao existe: $(roms)"; \
+			exit 1; \
 		fi; \
-	# renomeia o ELF de boot para MAIUSCULO (padrao de disco)
-	if [ -f "$(ISO_DIR)/SNESticle.elf" ]; then \
-		mv "$(ISO_DIR)/SNESticle.elf" "$(ISO_DIR)/$(BOOT_ELF)"; \
-	elif [ -f "$(ISO_DIR)/SNESticle.ELF" ]; then \
-		mv "$(ISO_DIR)/SNESticle.ELF" "$(ISO_DIR)/$(BOOT_ELF)"; \
-	fi; \
-	# cria SYSTEM.CNF (na raiz) - ordem BOOT2/VER/VMODE
-	printf "BOOT2 = cdrom0:\\%s;1\r\nVER = %s\r\nVMODE = %s\r\n" "$(BOOT_ELF)" "$(VER)" "$(VMODE)" > "$(ISO_DIR)/SYSTEM.CNF"; \
-	echo "[ISO] SYSTEM.CNF:"; \
-	cat "$(ISO_DIR)/SYSTEM.CNF"; \
-	echo "[ISO] ISO_DIR=$(ISO_DIR)"
-
-iso_image:
-	@set -e; \
-	echo "[ISO] gerando $(ISO_OUT) com: $(MKISOFS) $(MKISOFSFLAGS)"; \
-	$(MKISOFS) $(MKISOFSFLAGS) -V "$(ISO_LABEL)" -o "$(ISO_OUT)" "$(ISO_DIR)"; \
-	# se existir ps2bootgen no sistema, roda (opcional)
-	if command -v ps2bootgen >/dev/null 2>&1; then \
-		echo "[ISO] ps2bootgen detectado: aplicando licenca (opcional)"; \
-		ps2bootgen -dvd -japan "$(ISO_OUT)"; \
+		mkdir -p "$(ISO_ROOT_DIR)/ROMS"; \
+		find "$(roms)" -maxdepth 1 -type f \
+			\( -iname '*.smc' -o -iname '*.sfc' -o -iname '*.swc' \
+			   -o -iname '*.fig' -o -iname '*.zip' \) \
+			-exec cp -f {} "$(ISO_ROOT_DIR)/ROMS/" \; ; \
+		echo "[iso-root] ROMs copiadas de $(roms)"; \
 	else \
-		echo "[ISO] ps2bootgen nao encontrado (ok para OPL/emulador)"; \
+		echo "[iso-root] Sem ROMs (use roms=<pasta> para incluir)"; \
 	fi
-# -------------- /ISO -----------------
+	@if [ -d "$(CURDIR)/cdroot" ]; then \
+		cp -a "$(CURDIR)/cdroot/." "$(ISO_ROOT_DIR)/"; \
+		echo "[iso-root] cdroot extras copiados"; \
+	fi
+
+iso: iso-root
+	@mkdir -p "$$(dirname "$(ISO_OUT)")"
+	@if command -v xorriso >/dev/null 2>&1; then \
+		xorriso -as mkisofs \
+			-V "$(ISO_LABEL)" \
+			-sysid PLAYSTATION \
+			-A PLAYSTATION \
+			-publisher PLAYSTATION \
+			-J -joliet-long \
+			-o "$(ISO_OUT)" \
+			"$(ISO_ROOT_DIR)"; \
+	elif command -v genisoimage >/dev/null 2>&1; then \
+		genisoimage \
+			-V "$(ISO_LABEL)" \
+			-sysid PLAYSTATION \
+			-A PLAYSTATION \
+			-publisher PLAYSTATION \
+			-J -joliet-long \
+			-o "$(ISO_OUT)" \
+			"$(ISO_ROOT_DIR)"; \
+	elif command -v mkisofs >/dev/null 2>&1; then \
+		mkisofs \
+			-V "$(ISO_LABEL)" \
+			-sysid PLAYSTATION \
+			-A PLAYSTATION \
+			-publisher PLAYSTATION \
+			-J -joliet-long \
+			-o "$(ISO_OUT)" \
+			"$(ISO_ROOT_DIR)"; \
+	fi
+	@echo "[iso] $(ISO_OUT)"
+	@if [ -n "$(strip $(out))" ]; then \
+		mkdir -p "$(out)"; \
+		cp -f "$(ISO_OUT)" "$(out)/"; \
+		echo "[iso] copiada para $(out)/"; \
+	fi
+# ---- /ISO ----
