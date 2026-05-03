@@ -19,7 +19,7 @@ extern "C" {
 #include "mcsave_ee.h"
 };
 
-static char *_MenuEntries[]=
+static const char *_MenuEntries[]=
 {
 	"Copy File",
 	"Paste File",
@@ -30,7 +30,7 @@ static char *_MenuEntries[]=
 int CBrowserScreen::GetEntryPath(char *pStr, int nChars)
 {
 	if (m_iSelect >=0 && m_iSelect < m_nEntries)
-		return sprintf(pStr, "%s%s", m_Dir, m_pDirEntries[m_iSelect].name);
+		return snprintf(pStr, nChars, "%s%s", m_Dir, m_pDirEntries[m_iSelect].name);
 	else 
 		return 0;
 }
@@ -86,8 +86,8 @@ int CBrowserScreen::MenuEvent(Uint32 Type, Uint32 Parm1, void *Parm2)
 					break;
 				case 1: // Paste file
 					{
-						char strDestPath[512];
-						char strSrcPath[512];
+						char strDestPath[1024];
+						char strSrcPath[1024];
 						char strDestShortName[256];
 						char strDestFileName[256];
 						char strDestFileExt[256];
@@ -122,8 +122,8 @@ int CBrowserScreen::MenuEvent(Uint32 Type, Uint32 Parm1, void *Parm2)
 						// truncate file name
 						PathTruncFileName(strDestShortName, strDestFileName, PathGetMaxFileNameLength(pBrowser->m_Dir) - strlen(strDestFileExt));
 						
-						sprintf(strDestPath, "%s%s%s", pBrowser->m_Dir, strDestShortName, strDestFileExt);
-						sprintf(strSrcPath, "%s", pBrowser->m_SubMenu.GetText(0));
+						snprintf(strDestPath, sizeof(strDestPath), "%s%s%s", pBrowser->m_Dir, strDestShortName, strDestFileExt);
+						snprintf(strSrcPath, sizeof(strSrcPath), "%s", pBrowser->m_SubMenu.GetText(0));
 
 
 						printf("src: %s\n", strSrcPath );
@@ -175,7 +175,7 @@ CBrowserScreen::CBrowserScreen(Uint32 uMaxEntries)
 	m_pDirEntries = new BrowserEntryT[uMaxEntries];
 
 	m_SubMenu.SetTitle("File Menu");
-	m_SubMenu.SetEntries(_MenuEntries);
+	m_SubMenu.SetEntries((char **)_MenuEntries);
 	m_SubMenu.SetMsgFunc(MenuEvent);
 	m_SubMenu.SetUserData(this);
 }
@@ -216,11 +216,11 @@ void CBrowserScreen::SortEntries()
 }
 
 
-void CBrowserScreen::AddEntry(Char *pName, BrowserEntryTypeE eType, Int32 size)
+void CBrowserScreen::AddEntry(const Char *pName, BrowserEntryTypeE eType, Int32 size)
 {
 	if (m_nEntries < m_MaxEntries)
 	{
-		strncpy(m_pDirEntries[m_nEntries].name, pName, BROWSER_ENTRY_MAXCHARS);
+		strncpy(m_pDirEntries[m_nEntries].name, pName, BROWSER_ENTRY_MAXCHARS - 1);
 		m_pDirEntries[m_nEntries].name[BROWSER_ENTRY_MAXCHARS-1] = '\0';
 		m_pDirEntries[m_nEntries].size = size;
 		m_pDirEntries[m_nEntries].eType = eType;
@@ -481,7 +481,7 @@ static int _BrowserDread(int fd, fio_dirent_t *dirent, Bool bIsMCDir)
 }
 
 
-void CBrowserScreen::SetDir(Char *pDir)
+void CBrowserScreen::SetDir(const Char *pDir)
 {
 //    Int32 nEntries, iEntry;
 	int fd;
@@ -576,7 +576,7 @@ void CBrowserScreen::SetDir(Char *pDir)
     printf("BrowserEntries: %d\n", m_nEntries);
 }
 
-void CBrowserScreen::Chdir(Char *pSubDir)
+void CBrowserScreen::Chdir(const Char *pSubDir)
 {
 	Char dir[256];
 

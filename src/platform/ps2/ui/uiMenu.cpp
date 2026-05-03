@@ -43,7 +43,7 @@ void CMenuScreen::SetText(int iText, const char *pStr)
 	strcpy(m_strText[iText], pStr);
 }
 
-static void _MenuPrintAlignCenter(int x, int y, char *str, Bool bHighlight = FALSE)
+static void _MenuPrintAlignCenter(int x, int y, const char *str, Bool bHighlight = FALSE)
 {                
     x-= FontGetStrWidth(str) / 2;
     FontPuts(x, y, str);
@@ -55,7 +55,7 @@ static void _MenuPrintAlignCenter(int x, int y, char *str, Bool bHighlight = FAL
     }
 }
 
-static void _MenuHeader(int vy, char *str)
+static void _MenuHeader(int vy, const char *str)
 {
     PolyColor4f(0.0f, 0.2f, 0.2f, 0.5f); 
 	PolyRect(32, vy, 256-64, 9);

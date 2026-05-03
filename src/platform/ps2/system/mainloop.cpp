@@ -783,38 +783,22 @@ void MainLoopRender()
 
 
 
-/* Render-pipeline trace points: only print on the first few frames
-       so we can see whether the very first PolyRect+FontPrintf+flush
-       cycle survives, without spamming the status row forever (the
-       per-frame counter in MainLoopProcess already proves liveness). */
-    if (_iFrame < 5)
-        BOOTLOG("[boot] render f=%lu: GPFifoFlush()\n", (unsigned long)_iFrame);
     PROF_ENTER("GPFlush");
     GPFifoFlush();
     PROF_LEAVE("GPFlush");
-    if (_iFrame < 5)
-        BOOTLOG("[boot] render f=%lu: GPFifoFlush done\n", (unsigned long)_iFrame);
 
     PROF_ENTER("WaitVBlank");
 
     if ( (_iFrame&15)==0)   _uVblankCycle = ProfCtrGetCycle();
-    if (_iFrame < 5)
-        BOOTLOG("[boot] render f=%lu: WaitForNextVRstart()\n", (unsigned long)_iFrame);
 	WaitForNextVRstart(1);
-    if (_iFrame < 5)
-        BOOTLOG("[boot] render f=%lu: WaitForNextVRstart done\n", (unsigned long)_iFrame);
     if ( (_iFrame&15)==0)   _uVblankCycle = ProfCtrGetCycle() - _uVblankCycle;
 
     PROF_LEAVE("WaitVBlank");
 
     PROF_ENTER("GSSetCrt");
-    if (_iFrame < 5)
-        BOOTLOG("[boot] render f=%lu: GS_SetCrtFB(%d)\n", (unsigned long)_iFrame, whichdrawbuf);
     GS_SetCrtFB(whichdrawbuf);
     whichdrawbuf ^= 1;
     GS_SetDrawFB(whichdrawbuf);
-    if (_iFrame < 5)
-        BOOTLOG("[boot] render f=%lu: GS_SetCrtFB done\n", (unsigned long)_iFrame);
     PROF_LEAVE("GSSetCrt");
 
     _iFrame++;

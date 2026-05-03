@@ -204,7 +204,7 @@ void _MenuPrintIPPort(int x, int y, unsigned ipaddr, unsigned port)
                     );
 }
 
-void _MenuPrintAlignLeft(int x, int y, char *str, Bool bHighlight = FALSE)
+void _MenuPrintAlignLeft(int x, int y, const char *str, Bool bHighlight = FALSE)
 {    
     FontPuts(x , y, str);
     if (bHighlight)
@@ -214,7 +214,7 @@ void _MenuPrintAlignLeft(int x, int y, char *str, Bool bHighlight = FALSE)
     }
 }
 
-void _MenuPrintAlignRight(int x, int y, char *str, Bool bHighlight = FALSE)
+void _MenuPrintAlignRight(int x, int y, const char *str, Bool bHighlight = FALSE)
 {    
     x-= FontGetStrWidth(str);
     FontPuts(x , y, str);
@@ -225,7 +225,7 @@ void _MenuPrintAlignRight(int x, int y, char *str, Bool bHighlight = FALSE)
     }
 }
 
-void _MenuPrintAlignCenter(int x, int y, char *str, Bool bHighlight = FALSE)
+void _MenuPrintAlignCenter(int x, int y, const char *str, Bool bHighlight = FALSE)
 {                
     x-= FontGetStrWidth(str) / 2;
     FontPuts(x, y, str);
@@ -238,7 +238,7 @@ void _MenuPrintAlignCenter(int x, int y, char *str, Bool bHighlight = FALSE)
 }
 
 
-static char *m_DHCPStr[]=
+static const char *m_DHCPStr[]=
 {
     "disabled",   //  DHCP_DISABLED 0
     "requesting", //  DHCP_REQUESTING 1
@@ -257,21 +257,21 @@ static char *m_DHCPStr[]=
 };
 
 
-static char *m_NetplayClientStatusStr[]=
+static const char *m_NetplayClientStatusStr[]=
 {
     "not connected",
     "connecting",
     "connected"
 };
 
-static char *m_NetplayServerStatusStr[]=
+static const char *m_NetplayServerStatusStr[]=
 {
     "idle",
     "connecting",
     "listening"
 };
 
-void _MenuHeader(int vy, char *str)
+void _MenuHeader(int vy, const char *str)
 {
     PolyColor4f(0.0f, 0.2f, 0.2f, 0.5f); 
 	PolyRect(32, vy, 256-64, 9);
@@ -282,7 +282,7 @@ void _MenuHeader(int vy, char *str)
 
 void _MenuDrawEditIP(int x, int y, Int8 *pIP, int iDigit)
 {
-    char *pFormat = "abc.def.ghi.jkl";
+    const char *pFormat = "abc.def.ghi.jkl";
     char str[2];
 
     str[1] = 0;
@@ -312,7 +312,7 @@ void CNetworkScreen::Draw()
     t_ip_info configinfo;
     t_ip_info *config = NULL;
     memset(&configinfo, 0, sizeof(configinfo));
-    if (ps2ip_getconfig("sm1",&configinfo))
+    if (ps2ip_getconfig((char *)"sm1",&configinfo))
 	{
 		config = &configinfo;
 	}
