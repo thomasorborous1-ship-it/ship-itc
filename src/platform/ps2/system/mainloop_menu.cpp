@@ -1,15 +1,10 @@
 #include <stdio.h>
 
 #include "types.h"
-#include "uiMenu.h"
 #include "mainloop_install.h"
 #include "mainloop_menu.h"
+#include "mainloop_shared.h"
 
-extern CMenuScreen *_MainLoop_pMenuScreen;
-extern char *_MainLoop_pInstallFiles[];
-
-int InstallFiles(char *pDestPath, char *pSrcPath, char **ppInstallFiles, int (*pCallBack)(char *pDestName, char *pSrcName, int Position, int Total));
-int CopyFile(char *pDest, char *pSrc, int (*pCallBack)(char *pDestName, char *pSrcName, int Position, int Total));
 extern "C" int list_title_db(char *pPath);
 
 int _MainLoopMenuEvent(Uint32 Type, Uint32 Parm1, void *Parm2)

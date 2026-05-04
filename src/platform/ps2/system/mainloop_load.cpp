@@ -22,20 +22,6 @@
 #include "mainloop_load.h"
 #include "zlib.h"
 
-extern SnesRom *_pSnesRom;
-extern CRenderSurface *_fbTexture[2];
-extern TextureT _OutTex;
-extern Uint8 _RomData[4 * 1024 * 1024 + 1024];
-extern Emu::MovieClip *s_pMovieClip;
-extern Float32 _MainLoop_fOutputIntensity;
-extern SJPCMMixBuffer *_SJPCMMix;
-
-void _MainLoopResetInputChecksums();
-#if MAINLOOP_HISTORY
-void _MainLoopResetHistory();
-#endif
-
-
 extern "C" {
 #include "unzip.h"
 }

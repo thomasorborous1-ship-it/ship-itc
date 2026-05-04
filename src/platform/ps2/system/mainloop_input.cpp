@@ -6,33 +6,11 @@
 #include "mainloop_input.h"
 #include "mainloop_state.h"
 #include "mainloop_ui.h"
+#include "mainloop_shared.h"
 #include "mainloop.h"
 #include "input.h"
 #include "memcard.h"
 #include "prof.h"
-#include "wavfile.h"
-#include "emumovie.h"
-#include "snes.h"
-#include "uiBrowser.h"
-#include "uiNetwork.h"
-#include "uiMenu.h"
-#include "uiLog.h"
-
-extern Emu::System *_pSystem;
-extern Emu::MovieClip *s_pMovieClip;
-extern Uint32 _MainLoop_uDebugDisplay;
-extern Bool _bMenu;
-extern Bool _MainLoop_BlackScreen;
-extern CBrowserScreen *_MainLoop_pBrowserScreen;
-extern CNetworkScreen *_MainLoop_pNetworkScreen;
-extern CMenuScreen *_MainLoop_pMenuScreen;
-extern CLogScreen *_MainLoop_pLogScreen;
-extern CScreen *_MainLoop_pScreen;
-void _MenuEnable(Bool bEnable);
-
-#ifdef DEBUG
-extern CWavFile _WavFile;
-#endif
 
 
 #define MENU_REPEAT (16)

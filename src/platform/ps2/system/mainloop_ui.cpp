@@ -4,27 +4,10 @@
 #include "types.h"
 #include "console.h"
 #include "mainloop_ui.h"
+#include "mainloop_shared.h"
 
-#include "uiBrowser.h"
-#include "uiNetwork.h"
-#include "uiMenu.h"
-#include "uiLog.h"
 #include "poly.h"
 #include "font.h"
-
-extern void MainLoopRender();
-
-extern CBrowserScreen *_MainLoop_pBrowserScreen;
-extern CNetworkScreen *_MainLoop_pNetworkScreen;
-extern CMenuScreen *_MainLoop_pMenuScreen;
-extern CLogScreen *_MainLoop_pLogScreen;
-extern CScreen *_MainLoop_pScreen;
-
-extern Bool _bMenu;
-extern Char _MainLoop_ModalStr[256];
-extern Int32 _MainLoop_ModalCount;
-extern Char _MainLoop_StatusStr[256];
-extern Int32 _MainLoop_StatusCount;
 
 void MainLoopModalPrintf(Int32 Time, const Char *pFormat, ...)
 {
