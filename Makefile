@@ -57,8 +57,12 @@ INCS := \
 	-I$(LEGACY_ROOT)/Gep/Source/common \
 	-I$(CURDIR)/src/third_party/miniz \
 	-I$(CURDIR)/src/common/io \
-	-I$(LEGACY_ROOT)/SNESticle/Source/common \
-	-I$(LEGACY_ROOT)/SNESticle/Source/ps2 \
+	-I$(CURDIR)/src/snes/cpu \
+	-I$(CURDIR)/src/snes/core \
+	-I$(CURDIR)/src/snes/ppu \
+	-I$(CURDIR)/src/snes/apu \
+	-I$(CURDIR)/src/snes/rom \
+	-I$(CURDIR)/src/snes/state \
 	-I$(LEGACY_ROOT)/SNESticle/XML \
 	-I$(LEGACY_ROOT)/SNESticle/Modules/mcsave/ee \
 	-I$(LEGACY_ROOT)/SNESticle/Modules/sjpcm/ee \
