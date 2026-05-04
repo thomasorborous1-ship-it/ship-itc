@@ -13,7 +13,6 @@ EE_CC  ?= $(shell command -v ee-gcc 2>/dev/null || command -v mips64r5900el-ps2-
 EE_CXX ?= $(shell command -v ee-g++ 2>/dev/null || command -v mips64r5900el-ps2-elf-g++ 2>/dev/null)
 EE_STRIP ?= ee-strip
 
-LEGACY_ROOT ?= $(CURDIR)/vendor/legacy
 IRX_DIR     ?= $(PS2SDK)/iop/irx
 
 # DEBUG_BOOT_SCREEN: when set to 1 the EE side calls init_scr() in main()
@@ -42,35 +41,32 @@ CXXFLAGS := -G0 -O2 -Wall -Wno-narrowing -Wno-overflow -fno-exceptions -fno-rtti
 
 INCS := \
 	-I$(EMBED_DIR) \
-	-I$(CURDIR)/src/common/media \
-	-I$(CURDIR)/src/platform/ps2/cdvd \
-	-I$(CURDIR)/src/platform/ps2/gs \
-	-I$(CURDIR)/src/platform/ps2/lowlevel \
-	-I$(CURDIR)/src/platform/ps2 \
-	-I$(CURDIR)/src/platform/ps2/ui \
-	-I$(CURDIR)/src/platform/ps2/system \
-	-I$(CURDIR)/src/platform/ps2/input \
-	-I$(CURDIR)/src/platform/ps2/memcard \
 	-I$(CURDIR)/src \
-	-I$(LEGACY_ROOT)/Gep/Include/common \
-	-I$(LEGACY_ROOT)/Gep/Include/ps2 \
-	-I$(LEGACY_ROOT)/Gep/Source/common \
-	-I$(CURDIR)/src/third_party/miniz \
+	-I$(CURDIR)/src/app \
+	-I$(CURDIR)/src/common/base \
+	-I$(CURDIR)/src/common/debug \
 	-I$(CURDIR)/src/common/io \
-	-I$(CURDIR)/src/snes/cpu \
-	-I$(CURDIR)/src/snes/core \
-	-I$(CURDIR)/src/snes/ppu \
+	-I$(CURDIR)/src/common/media \
+	-I$(CURDIR)/src/common/render \
+	-I$(CURDIR)/src/modules/mcsave \
+	-I$(CURDIR)/src/modules/netplay \
+	-I$(CURDIR)/src/modules/sjpcm \
+	-I$(CURDIR)/src/platform/ps2 \
+	-I$(CURDIR)/src/platform/ps2/cdvd \
+	-I$(CURDIR)/src/platform/ps2/common \
+	-I$(CURDIR)/src/platform/ps2/gs \
+	-I$(CURDIR)/src/platform/ps2/input \
+	-I$(CURDIR)/src/platform/ps2/lowlevel \
+	-I$(CURDIR)/src/platform/ps2/memcard \
+	-I$(CURDIR)/src/platform/ps2/system \
+	-I$(CURDIR)/src/platform/ps2/ui \
 	-I$(CURDIR)/src/snes/apu \
+	-I$(CURDIR)/src/snes/core \
+	-I$(CURDIR)/src/snes/cpu \
+	-I$(CURDIR)/src/snes/ppu \
 	-I$(CURDIR)/src/snes/rom \
 	-I$(CURDIR)/src/snes/state \
-	-I$(LEGACY_ROOT)/SNESticle/XML \
-	-I$(LEGACY_ROOT)/SNESticle/Modules/mcsave/ee \
-	-I$(LEGACY_ROOT)/SNESticle/Modules/sjpcm/ee \
-	-I$(LEGACY_ROOT)/SNESticle/Modules/netplay/Source/common \
-	-I$(LEGACY_ROOT)/SNESticle/Modules/netplay/Source/ps2/common \
-	-I$(LEGACY_ROOT)/SNESticle/Modules/netplay/Source/ps2/ee \
-	-I$(LEGACY_ROOT)/SNESticle/Modules/libcdvd/common \
-	-I$(LEGACY_ROOT)/SNESticle/Modules/libcdvd/ee \
+	-I$(CURDIR)/src/third_party/miniz \
 	-I$(PS2SDK)/common/include \
 	-I$(PS2SDK)/ee/include \
 	-I$(PS2SDK)/ports/include
