@@ -104,4 +104,10 @@ src/platform/ps2/system/mainloop_browser.cpp
 src/platform/ps2/system/mainloop_load.cpp
 src/platform/ps2/system/mainloop_input.cpp
 src/platform/ps2/system/mainloop_exec.cpp
+src/platform/ps2/system/mainloop_globals.cpp
+src/platform/ps2/system/mainloop_init.cpp
+src/platform/ps2/system/mainloop_render.cpp
+src/platform/ps2/system/mainloop_process.cpp
+src/platform/ps2/system/mainloop_menu_runtime.cpp
+src/platform/ps2/system/global_alloc.cpp
 src/platform/ps2/system/embedded_irx.cpp

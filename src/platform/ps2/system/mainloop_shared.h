@@ -82,10 +82,15 @@ extern Uint32  _MainLoop_AutoSaveTime;
 extern Bool    _MainLoop_SRAMUpdated;
 extern Float32 _MainLoop_fOutputIntensity;
 
-/* ---- Function entrypoints living in mainloop.cpp ------------------ */
+/* ---- Function entrypoints across mainloop_*.cpp ------------------- */
 
 void MainLoopRender();
 void _MenuEnable(Bool bEnable);
+/* Drawn from MainLoopRender() (mainloop_render.cpp), defined in
+   mainloop_menu_runtime.cpp. Was a file-static helper inside
+   mainloop.cpp; promoted to extern when MainLoopRender() and the
+   menu-runtime were split into separate translation units. */
+void _MenuDraw();
 
 
 enum
