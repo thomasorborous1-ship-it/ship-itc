@@ -17,6 +17,7 @@
 extern "C" {
 #include "cdvd_rpc.h"
 #include "mcsave_ee.h"
+#include "ps2mem.h"	/* PS2MEM_UNCACHED */
 };
 
 static const char *_MenuEntries[]=
@@ -505,9 +506,30 @@ void CBrowserScreen::SetDir(const Char *pDir)
 		fd = fioDopen(pDir);
 		if (fd >= 0)
 		{
+			/* Access dirbuf through the uncached EE segment
+			   (KSEG1 mirror, +0x20000000) so reads of the dread
+			   buffer always come from physical memory - never from
+			   the EE's stale data cache.
+
+			   Background: fioDread / MCSave_Dread call
+			   SifWriteBackDCache(buf, ...) before the RPC, but
+			   neither calls SifInvalidateDCache afterwards. The IOP
+			   then writes the directory entry into main memory via
+			   SBUS DMA, but the EE's L1 D$ has no automatic snoop
+			   for SBUS DMA, so dirent fields that are still resident
+			   in cache from a previous iteration (or from the EE's
+			   own pre-RPC memset) get read back instead of the
+			   freshly DMAed bytes. In practice this was making
+			   stat.attr carry the SUBDIR bit (0x10) of an earlier
+			   directory entry into a regular file slot, so a couple
+			   of files (e.g. MCSAVE.IRX, NETPLAY.IRX) were rendered
+			   with the directory colour even though the ISO 9660
+			   directory bit was clearly off. Bypassing the cache via
+			   PS2MEM_UNCACHED removes the coherency hazard. */
 			static Uint8 dirbuf[512] __attribute__((aligned(64)));
 #ifdef _EE
-			io_dirent_t *dirent = (io_dirent_t *)&dirbuf;
+			io_dirent_t *dirent =
+				(io_dirent_t *)PS2MEM_UNCACHED(&dirbuf);
 #else
 			fio_dirent_t *dirent = (fio_dirent_t *)&dirbuf;
 #endif
