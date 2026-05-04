@@ -65,8 +65,25 @@ void GS_SetDispMode(int dx, int dy, int width, int height)
 	           SLBG<<7 | ALP<<8.
 	   0xFF65 = EN1=1, EN2=0, CRTMD=001, MMOD=1, AMOD=1, SLBG=0,
 	           ALP=0xFF. */
-	GS_PMODE = 0xFF61;
-	//GS_SMODE2 = 0x01; /* Looks like this gets set by sceSetGSCrt */
+	GS_PMODE = 0xFF65;
+
+	/* SMODE2: explicitly set non-interlace + frame-mode reading.
+	   GS_InitGraph() above invokes the BIOS sceSetGSCrt syscall (id 2),
+	   which on real PS2 hardware leaves SMODE2.FFMD = 0 (field-mode
+	   readout) regardless of the interlace argument. Real silicon copes
+	   with non-interlace + field-mode, but PCSX2 / NetherSX2 follow the
+	   GS spec strictly and only scan out half of the framebuffer per
+	   refresh in that combination, alternating which half from frame to
+	   frame. The result on the emulator is a striped / shifted display
+	   even though the GIF DMA chains land in VRAM correctly (the SMW
+	   title screen letters look broken into vertical bars / dots).
+
+	   Override SMODE2 ourselves immediately after the BIOS call so the
+	   CRTC reads the whole framebuffer per refresh.
+	   Bit layout: INT<<0 | FFMD<<1 | DPMS<<2.
+	   0x02 = INT=0 (non-interlace), FFMD=1 (frame-mode), DPMS=0. */
+	GS_SMODE2 = 0x02;
+
 	GS_DISPFB1 = GS_SET_DISPFB((0 / 0x2000), (width / 64), 0, 0, 0);
 	GS_DISPLAY1 =  (((u64)((height)-1)<<44) |
 					((u64)0x9FF<<32) |
