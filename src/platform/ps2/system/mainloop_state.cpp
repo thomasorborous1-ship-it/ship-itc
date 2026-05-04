@@ -16,8 +16,6 @@ int MCSave_WriteSync(int block, int *pResult);
 #include "mainloop_shared.h"
 #include "mainloop_state.h"
 
-extern Uint32 _uInputFrame;
-extern Uint32 _uInputChecksum[5];
 #if MAINLOOP_HISTORY
 extern Uint32 _nHistory;
 #endif

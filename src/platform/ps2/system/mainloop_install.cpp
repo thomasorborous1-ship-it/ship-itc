@@ -114,9 +114,6 @@ extern "C" Int32 SNCPUExecute_ASM(SNCpuT *pCpu);
 
 #include "mainloop_install.h"
 
-extern CMenuScreen *_MainLoop_pMenuScreen;
-extern void MainLoopRender();
-
 int _MainLoopInstallCallback(char *pDestName, char *pSrcName, int Position, int Total)
 {
 	char str[256];

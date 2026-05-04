@@ -6,12 +6,11 @@
 #include "file.h"
 #include "mainloop_debug.h"
 #include "mainloop_iop.h"
+#include "mainloop_load.h"
 #include "mainloop_net.h"
+#include "mainloop_shared.h"
+#include "mainloop_ui.h"
 #include "mainloop.h"
-
-extern Char _MainLoop_BootDir[];
-
-extern void ScrPrintf(const Char *pFormat, ...);
 
 extern "C" {
 #include "ps2ip.h"
@@ -19,11 +18,6 @@ extern "C" {
 #define MAINLOOP_NETPORT (6113)
 
 }
-
-
-extern Bool _MainLoopExecuteFile(const char *pFileName, Bool bLoadSRAM);
-extern void _MainLoopUnloadRom();
-extern void _MenuEnable(Bool bEnable);
 
 int _MainLoopNetworkEvent(Uint32 Type, Uint32 Parm1, void *Parm2)
 {

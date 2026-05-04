@@ -2,20 +2,15 @@
 #include <string.h>
 
 #include "types.h"
-#include "snes.h"
-#include "rendersurface.h"
 #include "mixbuffer.h"
 #include "prof.h"
 #include "file.h"
-#include "snstate.h"
 #include "mainloop_exec.h"
+#include "mainloop_shared.h"
 
 #ifndef MAINLOOP_SNESSTATEDEBUG
 #define MAINLOOP_SNESSTATEDEBUG (CODE_DEBUG && 0)
 #endif
-
-extern Emu::System *_pSystem;
-extern SnesSystem *_pSnes;
 
 extern "C" {
 #include "sncpu_c.h"

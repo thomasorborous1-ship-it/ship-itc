@@ -3,13 +3,11 @@
 #include "types.h"
 #include "path.h"
 #include "pathext.h"
-#include "uiBrowser.h"
 #include "mainloop_browser.h"
+#include "mainloop_load.h"
 #include "mainloop_net.h"
+#include "mainloop_shared.h"
 #include "mainloop_ui.h"
-
-extern Bool _MainLoopExecuteFile(const Char *pFileName, Bool bLoadSRAM);
-extern void _MenuEnable(Bool bEnable);
 
 int _MainLoopBrowserEvent(Uint32 Type, Uint32 Parm1, void *Parm2)
 {

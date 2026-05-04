@@ -46,11 +46,6 @@
 #include "sjpcmbuffer.h"
 #include "memcard.h"
 
-extern Char _SramPath[256];
-extern Char _MainLoop_SaveTitle[];
-extern Char *_MainLoop_NetConfigPaths[];
-extern void *_MainLoopNetCallback(NetPlayCallbackE eCallback, char *data, int size);
-
 #include "pathext.h"
 #include "snppucolor.h"
 #if 0
@@ -127,7 +122,7 @@ extern "C" Int32 SNCPUExecute_ASM(SNCpuT *pCpu);
 #include "emurom.h"
 
 #include "mainloop_iop.h"
-extern void ScrPrintf(const char *fmt, ...);
+#include "mainloop_ui.h"
 
 static int _LoadMcModule(const char *path, int argc, const char *argv)
 {
