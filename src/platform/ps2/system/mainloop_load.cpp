@@ -20,10 +20,9 @@
 #include "sjpcmbuffer.h"
 #include "emumovie.h"
 #include "mainloop_load.h"
-#include "zlib.h"
 
 extern "C" {
-#include "unzip.h"
+#include "miniz_compat.h"
 }
 
 void _MainLoopGetName(Char *pName, const Char *pPath)
@@ -68,69 +67,38 @@ int _MainLoopReadBinaryData(Uint8 *pBuffer, Int32 nBufferBytes, const char *pRom
 
 int _MainLoopReadGZData(Uint8 *pBuffer, Int32 nBufferBytes, const char *pRomFile)
 {
-        int nBytes = 0;
-        gzFile pFile;
+        return MinizReadGZToBuffer(pRomFile, pBuffer, nBufferBytes);
+}
 
-        pFile = gzopen(pRomFile, "rb");
-        if (!pFile)
-        {
-                return -1;
-        }
-        nBytes = gzread(pFile, pBuffer, nBufferBytes);
-        gzclose(pFile);
-
-        return nBytes;
+/* Filter callback for the .zip walk: accept only entries whose name
+   resolves to a recognised PathExtTypeE (i.e. a SNES rom / palette /
+   etc., not arbitrary text files that happened to be archived). */
+static int _MainLoopZipNameIsRom(const char *pName)
+{
+        PathExtTypeE eType;
+        return PathExtResolve(pName, &eType, FALSE) ? 1 : 0;
 }
 
 int _MainLoopReadZipData(Uint8 *pBuffer, Int32 nBufferBytes, const char *pZipFile, char *pFileName)
 {
-        unzFile hFile;
-        unz_file_info file_info;
-        char filename[256];
-        int nBytes = 0;
+        int nBytes;
 
-        hFile = unzOpen(pZipFile);
-        if (!hFile)
+        nBytes = MinizReadZipFirstMatch(
+                pZipFile,
+                pBuffer,
+                nBufferBytes,
+                pFileName,
+                256,
+                _MainLoopZipNameIsRom);
+
+        if (nBytes > 0)
         {
-                return -1;
+                printf("ZIP: read %s (%d)\n", pFileName ? pFileName : "", nBytes);
         }
-        printf("ZIP: file opened\n");
-
-        do
+        else
         {
-                if (unzGetCurrentFileInfo(hFile, &file_info, filename, sizeof(filename), NULL, 0, NULL, 0) != UNZ_OK)
-                        break;
-
-                printf("ZIP: file %s (%d)\n", filename, (int)file_info.uncompressed_size);
-
-                if (file_info.uncompressed_size <= (unsigned)nBufferBytes)
-                {
-                        PathExtTypeE eType;
-                        // do we recognize this file type?
-                        if (PathExtResolve(filename, &eType, FALSE))
-                        {
-                                printf("ZIP: read %s (%d)\n", filename, (int)file_info.uncompressed_size);
-
-                                // if so, read it
-                                if (unzOpenCurrentFile(hFile) == UNZ_OK)
-                                {
-                                        if (unzReadCurrentFile(hFile, pBuffer, file_info.uncompressed_size) > 0)
-                                        {
-                                                if (pFileName)
-                                                        strcpy(pFileName, filename);
-                                                nBytes = (int)file_info.uncompressed_size;
-                                        }
-                                        unzCloseCurrentFile(hFile);
-                                }
-                        }
-                }
-
-        } while (nBytes == 0 && unzGoToNextFile(hFile) == UNZ_OK);
-
-        printf("ZIP: file closed (%d)\n", nBytes);
-
-        unzClose(hFile);
-
+                printf("ZIP: no compatible entry in %s\n", pZipFile ? pZipFile : "");
+        }
         return nBytes;
 }
 

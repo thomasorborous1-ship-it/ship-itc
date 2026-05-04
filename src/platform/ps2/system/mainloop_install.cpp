@@ -65,7 +65,6 @@ extern "C" {
 #include "mcsave_ee.h"
 };
 
-#include "zlib.h"
 extern "C" {
 #include "hw.h"
 #include "gs.h"

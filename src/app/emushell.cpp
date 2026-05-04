@@ -5,8 +5,11 @@
 #include "emusys.h"
 #include "emurom.h"
 #include "emushell.h"
-#include "zlib.h"
 #include "dataio.h"
+
+extern "C" {
+#include "miniz_compat.h"
+}
 #include "pathext.h"
 
 #ifdef WIP
@@ -106,16 +109,12 @@ int CEmuShell::ReadFileData(Uint8 *pBuffer, Int32 nBufferBytes, char *pRomFile, 
 	{
     	if (bCompressed)
     	{
-    	    gzFile pFile;
-
-    	    pFile = gzopen(pRomFile, "rb");
-    	    if (!pFile)
+    	    nBytes = MinizReadGZToBuffer(pRomFile, pBuffer, nBufferBytes);
+    	    if (nBytes < 0)
     	    {
     	        printf("ERROR: Cannot open romgz %s", pRomFile);
     	        return -1;
     	    }
-    	    nBytes = gzread(pFile, pBuffer, nBufferBytes);
-    	    gzclose(pFile);
 
     	    printf("GZ ROM data read: %s (%d bytes)\n", pRomFile, nBytes);
     	} else
