@@ -55,10 +55,8 @@ INCS := \
 	-I$(LEGACY_ROOT)/Gep/Include/common \
 	-I$(LEGACY_ROOT)/Gep/Include/ps2 \
 	-I$(LEGACY_ROOT)/Gep/Source/common \
-	-I$(LEGACY_ROOT)/Gep/Source/common/zlib \
-	-I$(LEGACY_ROOT)/Gep/Include/common/zlib \
-	-I$(LEGACY_ROOT)/Gep/Source/common/unzip \
-	-I$(LEGACY_ROOT)/Gep/Include/common/unzip \
+	-I$(CURDIR)/src/third_party/miniz \
+	-I$(CURDIR)/src/common/io \
 	-I$(LEGACY_ROOT)/SNESticle/Source/common \
 	-I$(LEGACY_ROOT)/SNESticle/Source/ps2 \
 	-I$(LEGACY_ROOT)/SNESticle/XML \
