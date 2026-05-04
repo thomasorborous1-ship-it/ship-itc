@@ -8,9 +8,7 @@
 #include "mainloop_exec.h"
 #include "mainloop_shared.h"
 
-#ifndef MAINLOOP_SNESSTATEDEBUG
-#define MAINLOOP_SNESSTATEDEBUG (CODE_DEBUG && 0)
-#endif
+/* MAINLOOP_SNESSTATEDEBUG lives in mainloop_shared.h (included above). */
 
 extern "C" {
 #include "sncpu_c.h"

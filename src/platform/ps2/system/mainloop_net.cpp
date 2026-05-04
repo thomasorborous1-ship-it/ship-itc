@@ -15,9 +15,9 @@
 extern "C" {
 #include "ps2ip.h"
 #include "netplay_ee.h"
-#define MAINLOOP_NETPORT (6113)
-
 }
+
+/* MAINLOOP_NETPORT lives in mainloop_shared.h (included above). */
 
 int _MainLoopNetworkEvent(Uint32 Type, Uint32 Parm1, void *Parm2)
 {

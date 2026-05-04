@@ -41,10 +41,8 @@ extern "C" {
 };
 
 
-/* Same MAINLOOP_MEMCARD value used by mainloop_globals.cpp /
-   mainloop_iop.cpp / mainloop_install.cpp. Gates the memcard SRAM /
-   save-file path inside _MenuEnable(). */
-#define MAINLOOP_MEMCARD (CODE_RELEASE || 0)
+/* MAINLOOP_MEMCARD lives in mainloop_shared.h (included above) and
+   gates the memcard SRAM / save-file path inside _MenuEnable(). */
 
 
 void _MenuEnable(Bool bEnable)

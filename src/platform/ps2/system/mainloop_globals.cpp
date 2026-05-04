@@ -33,10 +33,8 @@
 #include "uiScreen.h"
 
 
-/* MAINLOOP_MEMCARD gates the memcard variants of _SramPath /
-   _MainLoop_SaveTitle below. Kept identical to the value used by
-   mainloop_iop.cpp / mainloop_install.cpp / (the legacy mainloop.cpp). */
-#define MAINLOOP_MEMCARD (CODE_RELEASE || 0)
+/* MAINLOOP_MEMCARD lives in mainloop_shared.h (included above) and
+   gates the memcard variants of _SramPath / _MainLoop_SaveTitle below. */
 
 
 /* ---- UI screens --------------------------------------------------- */
