@@ -143,12 +143,22 @@ void _MenuDraw()
 		pVersionInfo->CompilerVersion[1]
 		);
 #endif	
+
+    /* Status bar (green): compiler version on the left, IP in the
+       middle, app version right-aligned. Replaces the #if 0 block
+       above which depended on VersionGetInfo (also #if 0). */
+    FontPrintf(8, vy, "GCC%d.%d", __GNUC__, __GNUC_MINOR__);
+
     FontPrintf(48,vy,"IP: %d.%d.%d.%d", 
             (config.ipaddr.s_addr >> 0) & 0xFF,
             (config.ipaddr.s_addr >> 8) & 0xFF,
             (config.ipaddr.s_addr >>16) & 0xFF,
             (config.ipaddr.s_addr >>24) & 0xFF
                     );
+
+    static const char *_AppVersionStr = "SNESticlePS2 v0.3.4";
+    FontPuts(256 - 16 - FontGetStrWidth(_AppVersionStr),
+             vy, _AppVersionStr);
 
 
 
