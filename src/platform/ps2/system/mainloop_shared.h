@@ -29,6 +29,51 @@
 #include "uiScreen.h"
 
 
+/* ---- Project-wide build-time configuration ------------------------ *
+ *
+ * These macros used to be re-#defined at the top of every
+ * mainloop_*.cpp that consumed them, all with identical values.
+ * Centralising them here means a single edit point if any of the
+ * release/debug toggles ever needs to change.
+ *
+ * Behaviour-preserving consolidation; the values are exactly what
+ * mainloop_install.cpp / mainloop_iop.cpp / mainloop_globals.cpp /
+ * mainloop_state.cpp / mainloop_menu_runtime.cpp / mainloop_init.cpp /
+ * mainloop_net.cpp / mainloop_exec.cpp had locally. */
+
+#ifndef MAINLOOP_MEMCARD
+#define MAINLOOP_MEMCARD (CODE_RELEASE || 0)
+#endif
+
+#ifndef MAINLOOP_NETPORT
+#define MAINLOOP_NETPORT (6113)
+#endif
+
+#ifndef MAINLOOP_STATEPATH
+#if MAINLOOP_MEMCARD
+#define MAINLOOP_STATEPATH "host0:"
+#else
+#define MAINLOOP_STATEPATH "host0:/cygdrive/d/emu/"
+#endif
+#endif
+
+#ifndef MAINLOOP_SNESSTATEDEBUG
+#define MAINLOOP_SNESSTATEDEBUG (CODE_DEBUG && 0)
+#endif
+
+#ifndef MAINLOOP_NESSTATEDEBUG
+#define MAINLOOP_NESSTATEDEBUG (CODE_DEBUG && FALSE)
+#endif
+
+#ifndef MAINLOOP_HISTORY
+#define MAINLOOP_HISTORY (CODE_DEBUG && 0)
+#endif
+
+#ifndef MAINLOOP_MAXSRAMSIZE
+#define MAINLOOP_MAXSRAMSIZE (64 * 1024)
+#endif
+
+
 /* ---- Strings / paths ---------------------------------------------- */
 
 extern Char _RomName[256];

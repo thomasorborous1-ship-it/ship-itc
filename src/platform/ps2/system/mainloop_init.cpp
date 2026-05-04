@@ -68,7 +68,7 @@ extern "C" {
 #define BOOTLOG(...) do {} while(0)
 #define MENU_STARTDIR _MainLoop_MenuStartDir
 
-#define MAINLOOP_NETPORT (6113)
+/* MAINLOOP_NETPORT lives in mainloop_shared.h (included above). */
 
 
 /* The chosen GS layout (PAL/NTSC width, FB and texture addresses).

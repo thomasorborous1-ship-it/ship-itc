@@ -21,11 +21,7 @@ extern Uint32 _nHistory;
 #endif
 
 
-#if CODE_RELEASE
-#define MAINLOOP_STATEPATH "host0:"
-#else
-#define MAINLOOP_STATEPATH "host0:/cygdrive/d/emu/"
-#endif
+/* MAINLOOP_STATEPATH lives in mainloop_shared.h (included above). */
 
 static Uint32 _PathCalcHash(const char *pStr)
 {

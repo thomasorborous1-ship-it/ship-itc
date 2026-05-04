@@ -69,7 +69,6 @@ INCS := \
 	-I$(LEGACY_ROOT)/SNESticle/Modules/netplay/Source/ps2/ee \
 	-I$(LEGACY_ROOT)/SNESticle/Modules/libcdvd/common \
 	-I$(LEGACY_ROOT)/SNESticle/Modules/libcdvd/ee \
-	-I$(CURDIR)/compat \
 	-I$(PS2SDK)/common/include \
 	-I$(PS2SDK)/ee/include \
 	-I$(PS2SDK)/ports/include

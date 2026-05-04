@@ -94,26 +94,9 @@ extern "C" {
 extern "C" Int32 SNCPUExecute_ASM(SNCpuT *pCpu);
 
 
-#define MAINLOOP_MEMCARD (CODE_RELEASE || 0)
-
-#define MAINLOOP_NETPORT (6113)
-
-
-#if CODE_RELEASE
-#else
-#endif
-
-
-#if CODE_RELEASE
-#define MAINLOOP_STATEPATH "host0:"
-#else
-#define MAINLOOP_STATEPATH "host0:/cygdrive/d/emu/"
-#endif
-
-#define MAINLOOP_SNESSTATEDEBUG (CODE_DEBUG && 0)
-#define MAINLOOP_NESSTATEDEBUG (CODE_DEBUG && FALSE)
-#define MAINLOOP_HISTORY (CODE_DEBUG && 0)
-#define MAINLOOP_MAXSRAMSIZE (64 * 1024)
+/* MAINLOOP_MEMCARD / NETPORT / STATEPATH / SNESSTATEDEBUG /
+   NESSTATEDEBUG / HISTORY / MAXSRAMSIZE now live in
+   mainloop_shared.h (already included above). */
 
 #include "uiBrowser.h"
 #include "uiNetwork.h"
