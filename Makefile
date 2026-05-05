@@ -29,12 +29,12 @@ DEBUG_BOOT_SCREEN ?= 0
 # broken). Override on the make line: `make MAINLOOP_DEBUG_GS_TEST=1`.
 MAINLOOP_DEBUG_GS_TEST ?= 0
 
-CFLAGS := -G0 -O2 -Wall \
+CFLAGS := -G0 -O2 -Wall -fno-strict-aliasing \
 	-D_EE -DPS2 -DLSB_FIRST -DALIGN_DWORD -DCODE_PLATFORM=3 \
 	-DDEBUG_BOOT_SCREEN=$(DEBUG_BOOT_SCREEN) \
 	-DMAINLOOP_DEBUG_GS_TEST=$(MAINLOOP_DEBUG_GS_TEST)
 
-CXXFLAGS := -G0 -O2 -Wall -Wno-narrowing -Wno-overflow -fno-exceptions -fno-rtti -fpermissive \
+CXXFLAGS := -G0 -O2 -Wall -fno-strict-aliasing -Wno-narrowing -Wno-overflow -fno-exceptions -fno-rtti -fpermissive \
 	-D_EE -DPS2 -DLSB_FIRST -DALIGN_DWORD -DCODE_PLATFORM=3 \
 	-DDEBUG_BOOT_SCREEN=$(DEBUG_BOOT_SCREEN) \
 	-DMAINLOOP_DEBUG_GS_TEST=$(MAINLOOP_DEBUG_GS_TEST)
