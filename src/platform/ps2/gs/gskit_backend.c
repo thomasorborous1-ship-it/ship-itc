@@ -87,16 +87,37 @@ void GSK_Init(int width, int height,
 
     gsKit_init_screen(_pGsGlobal);
 
-    /* Position the framebuffer on the TV screen. The original code
-       used dx*(2560/width) for the X offset, baked into DISPLAY1.
-       gsKit's StartX/StartY get a sensible per-mode default; we then
-       nudge by (requested - default) so the picture lands where the
-       app expects. */
+    /* gsKit_init_screen has already programmed DISPLAY1/2 with its
+       own auto-computed magnification (NTSC default DW=2880, DH=480
+       gives MagH=10, MagV=1 for a 256x240 framebuffer). The original
+       SNESticle pipeline used a different convention - 1x vertical
+       and ~10x horizontal magnification, with DW=2559 and DH=h-1 -
+       which yields a noticeably different visible aspect on real TV
+       and on emulators that decode DISPLAY1 strictly (NetherSX2
+       reports the picture as oversized).
+
+       Re-emit DISPLAY1/2 with the legacy register layout so the
+       picture comes out at the same scale the iaddis original used.
+       gsKit does not touch DISPLAY1/2 again after init_screen, so
+       this stays in effect. */
     {
-        int extra_x = (dispx * (2560 / (width ? width : 256)))
-                      - _pGsGlobal->StartX;
-        int extra_y = dispy - _pGsGlobal->StartY;
-        gsKit_set_display_offset(_pGsGlobal, extra_x, extra_y);
+        int w = width  ? width  : 256;
+        int h = height ? height : 240;
+        u64 disp_reg = (((u64)((u64)(h - 1)) << 44) |
+                        ((u64)0x9FFULL << 32) |
+                        ((u64)(((2560 + w - 1) / w) - 1) << 23) |
+                        ((u64)(dispy & 0x7FF) << 12) |
+                        ((u64)(dispx * (2560 / w)) & 0xFFFULL));
+        *((volatile u64 *)0x12000080) = disp_reg; /* DISPLAY1 */
+        *((volatile u64 *)0x120000A0) = disp_reg; /* DISPLAY2 */
+        /* Keep gsGlobal's idea of the centre roughly aligned in case
+           a future caller of gsKit_set_display_offset uses it. */
+        _pGsGlobal->StartX = dispx * (2560 / w);
+        _pGsGlobal->StartY = dispy;
+        _pGsGlobal->MagH   = ((2560 + w - 1) / w) - 1;
+        _pGsGlobal->MagV   = 0;
+        _pGsGlobal->DW     = 2560;
+        _pGsGlobal->DH     = h;
     }
 
     gsKit_set_test (_pGsGlobal, GS_ZTEST_OFF);
