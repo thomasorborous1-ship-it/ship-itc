@@ -31,7 +31,8 @@ void SJPCMMixBuffer::GetFormat(Uint32 *puSampleRate, Uint32 *pnSampleBits, Uint3
 
 Int32 SJPCMMixBuffer::GetOutputSamples()
 {
-    Int32 nSamples, nBuffered;
+    Int32 nSamples;
+    Int32 nRaw;
 
     if (!SjPCM_IsInitialized())
     {
@@ -41,45 +42,43 @@ Int32 SJPCMMixBuffer::GetOutputSamples()
 
     PROF_ENTER("SjPCM_Available");
 
-    // determine number of samples in sound buffer
-//        SjPCM_BufferedAsyncStart();
-    if (m_bAsync)
-    {
-        nBuffered = SjPCM_BufferedAsyncGet();
-    } else
-    {
-        nBuffered = SjPCM_Buffered();
-    }
-    nSamples=0;
-
-    // determ
-	#if 0
-    if (nBuffered < 1 * 800) nSamples+=800;
-    if (nBuffered < 2 * 800) nSamples+=800;
-    if (nBuffered < 3 * 800) nSamples+=800;
-    if (nBuffered < 4 * 800) nSamples+=800;
-	#else
-	nSamples = 4 * 800 - nBuffered;
-	nSamples &= ~3;
-	if (nSamples < 0 ) nSamples = 0;
-	#endif
+    /*
+     * Ask the audsrv backend how many sample-frames the IOP ring
+     * buffer can accept right now.  This replaces the old formula
+     *     nSamples = 4 * 800 - SjPCM_Buffered();
+     * which assumed the ring buffer held exactly 3200 frames.
+     * audsrv uses a 20480-byte (5120-frame) ring, and
+     * audsrv_queued() can report a non-zero initial occupancy
+     * even before any audio is enqueued, so the old formula
+     * chronically under-produced audio (~424 samples/frame
+     * instead of the ~533 needed at 32 kHz / 60 fps).
+     *
+     * SjPCM_Available() -> audsrv_available() / 4  gives the
+     * real free space.  We cap at 3200 so a single frame never
+     * tries to mix more than the old worst-case, keeping EE CPU
+     * load bounded.
+     */
+    nRaw = SjPCM_Available();
+    if (nRaw > 4 * 800) nRaw = 4 * 800;
+    nRaw &= ~3;
+    if (nRaw < 0) nRaw = 0;
 
     // determine number of samples needed for input
     switch (m_uSampleRate)
     {
         case 48000:
             // sample output is 1:1
-            nSamples = nSamples;
+            nSamples = nRaw;
             break;
         case 32000:
             // sample output is 2:3
             // this must be divisible by 4 so that the output count is even
-            nSamples = (nSamples / 6) * 4;
+            nSamples = (nRaw / 6) * 4;
             break;
         case 24000:
             // sample output is 1:2
             // this must be divisible by 4 so that the output count is even
-            nSamples = (nSamples / 8) * 4;
+            nSamples = (nRaw / 8) * 4;
             break;
         default:
             nSamples = 0;
