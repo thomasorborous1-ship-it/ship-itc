@@ -665,6 +665,7 @@ Int32 SNSpcDspMixFull::OutputSample(Int32 iChannel, Int16 *pOut, Uint16 *pFrac, 
 
 #if SNSPCDSP_MIXASM
 
+__attribute__((noinline))
 void _MixChannel(Int32 *pOutLeft, Int32 *pOutRight, Int16 *pIn, Uint8 *pEnvelope, Uint16 *pFrac, Int32 nSamples, Int32 iVolLeft, Int32 iVolRight)
 {
 	__asm__ (
@@ -747,6 +748,7 @@ void _MixChannel(Int32 *pOutLeft, Int32 *pOutRight, Int16 *pIn, Uint8 *pEnvelope
 }
 
 
+__attribute__((noinline))
 void _MixChannelEcho(Int32 *pOutLeft, Int32 *pOutRight, Int16 *pEchoLeft, Int16 *pEchoRight, Int16 *pIn, Uint8 *pEnvelope, Uint16 *pFrac, Int32 nSamples, Int32 iVolLeft, Int32 iVolRight)
 {
 	__asm__ (
@@ -989,6 +991,7 @@ static void _SNSpcDspMemset64(Uint64 *pDest, Int32 nDwords)
 #if SNSPCDSP_MIXASM
 
 #if 1
+__attribute__((noinline))
 void _MixEcho(Int16 *pOut, Int32 *pMain, Int16 *pEcho, Int32 nSamples, Int32 iMainVol, Int32 iEchoVol)
 {
 
@@ -1291,6 +1294,8 @@ void SNSpcDspMixFull::FilterEcho(Int16 *pLeftEcho, Int16 *pRightEcho, Int32 nSam
 }
 
 
+extern "C" void DLog(const char *fmt, ...);
+
 void SNSpcDspMixFull::Mix(CMixBuffer *pMixBuf)
 {
 	static Int16 OutLeftData[SNSPCDSP_BUFFERSIZE] _ALIGN(16);
@@ -1304,6 +1309,13 @@ void SNSpcDspMixFull::Mix(CMixBuffer *pMixBuf)
 	Uint32 uCycle=0;
 	Uint32 uCyclesPerSample;
 	Int32 nSamplesPerUpdate;
+
+	{
+		static int __mix = 0;
+		if ((__mix & 0x3F) == 0)
+			DLog("[snes-aud] mix f=%d buf=%p", __mix, (void*)pMixBuf);
+		__mix++;
+	}
 
 #if SNSPCDSP_INFOSCRATCHPAD
 	pData = (SNSpcDspDataT *)PS2MEM_SCRATCHPAD;
@@ -1357,6 +1369,14 @@ void SNSpcDspMixFull::Mix(CMixBuffer *pMixBuf)
 		// dont update more than samples-per-update at a time
 		nSamples = nTotalSamples;
 		if (nSamples > nSamplesPerUpdate) nSamples = nSamplesPerUpdate;
+
+		{
+			static int __mxA = 0;
+			if ((__mxA & 0x3F) == 0)
+				DLog("[snes-aud] mixA tot=%d perUpd=%d ns=%d",
+					 (int)nTotalSamples, (int)nSamplesPerUpdate, (int)nSamples);
+			__mxA++;
+		}
 
 		// clear main and echo buffers
 		_SNSpcDspMemset64((Uint64 *)pData->Main[0], (sizeof(Int32) * nSamples+7) / 8);
@@ -1461,6 +1481,13 @@ void SNSpcDspMixFull::Mix(CMixBuffer *pMixBuf)
 		_MixEcho(OutRightData, pData->Main[1], pData->Echo[1], nSamples, 
 			(Int8)m_pDsp->GetReg(SNSPCDSP_REG_MVOLR), (Int8)m_pDsp->GetReg(SNSPCDSP_REG_EVOLR));
 		PROF_LEAVE("SNSpcDspMixEcho");
+
+		{
+			static int __mxB = 0;
+			if ((__mxB & 0x3F) == 0)
+				DLog("[snes-aud] mixB ns=%d ch=%u", (int)nSamples, (unsigned)nSampleChannels);
+			__mxB++;
+		}
 
 		// output buffer to sound hardware
 		if (nSampleChannels == 2)

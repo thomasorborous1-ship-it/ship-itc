@@ -10,12 +10,15 @@
 #include "embedded_irx.h"
 
 /* These headers are generated at build time by bin2c from the
-   corresponding files in irx/. Each one defines:
+   corresponding files in irx/ or directly from $(PS2SDK)/iop/irx/.
+   Each one defines:
        unsigned char  <name>_irx[]            __attribute__((aligned(16)));
        unsigned int   size_<name>_irx;
    They are included exactly once in this translation unit so the arrays
    end up as ordinary globals in the ELF. */
 #include "netplay_irx.h"
+#include "audsrv_irx.h"
+#include "freesd_irx.h"
 
 struct EmbeddedEntry
 {
@@ -30,19 +33,28 @@ struct EmbeddedEntry
    or come up incompatibly with the rom-resident services already bound
    by main.cpp / the BIOS. The result is the EE-side init function
    (CDVD_Init, SjPCM_Init, MCSave_Init) spins forever in SifBindRpc and
-   the boot deadlocks. We've already observed this with CDVD.IRX, and
-   the latest boot trace shows the same hang at SJPCM2.IRX.
+   the boot deadlocks. We've already observed this with CDVD.IRX and
+   the legacy SJPCM2.IRX.
 
-   Drop the three custom IRXs (CDVD/SJPCM2/MCSAVE) from the embedded
-   set so IOPLoadModule("...") returns < 0 and the corresponding
-   *_Init() call is never made. The user loses audio and memory-card
-   save support on the emulator, but the boot completes and the menu
-   can render - which is what we need to validate the rest of the
-   stack. NETPLAY.IRX stays embedded; it's already gated on a
-   bLoadedNetwork flag and won't try to load on emulator. */
+   The audio IRX has been migrated to PS2DEV's audsrv (see
+   src/modules/sjpcm/sjpcm_rpc.c). audsrv.irx is the standard modern
+   audio service from $(PS2SDK)/iop/irx/audsrv.irx, embedded here via
+   bin2c so it is available without needing the user to ship it next
+   to the ELF.
+
+   CDVD/MCSAVE remain not-embedded for the same compatibility reason
+   as before: their custom RPC servers hang on emulators. NETPLAY.IRX
+   stays embedded; it's gated on a bLoadedNetwork flag and won't try
+   to load when the IP stack didn't come up. */
 static const EmbeddedEntry s_embedded[] =
 {
     { "NETPLAY.IRX", netplay_irx, sizeof(netplay_irx) },
+    { "AUDSRV.IRX",  audsrv_irx,  sizeof(audsrv_irx)  },
+    /* freesd is the PS2SDK-supplied SPU2 driver IRX, used as a
+       universal fallback when rom0:LIBSD is absent (early Japanese
+       models, some emulator setups). audsrv binds to its sceSd*
+       exports the same way it would to LIBSD's. */
+    { "FREESD.IRX",  freesd_irx,  sizeof(freesd_irx)  },
 };
 
 static const char *path_basename(const char *path)

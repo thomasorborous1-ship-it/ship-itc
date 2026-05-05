@@ -9,7 +9,10 @@
 #define DEBUG_BOOT_SCREEN 0
 #endif
 
-#define BOOTLOG(...) do {} while(0)
+/* BOOTLOG: was a no-op. Re-enable as printf so the boot sequence
+   shows up in the emulator's console log alongside the IOP
+   loadmodule lines. Helps debug audio init and module loading. */
+#define BOOTLOG(...) printf(__VA_ARGS__)
 #define MENU_STARTDIR ""
 #define NEWLIB_PORT_AWARE
 #include <fileio.h>
@@ -340,17 +343,27 @@ void _MainLoopLoadModules(Char **ppSearchPaths)
         BOOTLOG("[boot] CDVD.IRX skipped (not available)\n");
     }
 
-    BOOTLOG("[boot] LIBSD: try load\n");
-	if (IOPLoadModule("rom0:LIBSD", NULL, 0, NULL) < 0)
-	{
-    	IOPLoadModule("LIBSD.IRX", ppSearchPaths, 0, NULL);
-	}
-    BOOTLOG("[boot] LIBSD done\n");
-
-    BOOTLOG("[boot] SJPCM2.IRX: try load\n");
-    if (IOPLoadModule("SJPCM2.IRX", ppSearchPaths, 0, NULL) >= 0)
+    /* Audio: load audsrv.irx (modern PS2DEV audio service, replaces
+       the legacy SjPCM stack). audsrv.irx depends on the SPU2 driver
+       (sceSd*), which lives in rom0:LIBSD on most retail PS2 BIOS
+       images. Early Japanese models and some emulators do not ship
+       LIBSD in rom0, so we fall back to the embedded freesd.irx
+       (PS2SDK's drop-in replacement at $(PS2SDK)/iop/irx/freesd.irx).
+       Either of those provides the sceSd* exports audsrv binds to. */
+    BOOTLOG("[boot] LIBSD/FREESD: try load\n");
+    if (IOPLoadModule("rom0:LIBSD", NULL, 0, NULL) < 0)
     {
-        BOOTLOG("[boot] SjPCM_Init()\n");
+        if (IOPLoadModule("FREESD.IRX", ppSearchPaths, 0, NULL) < 0)
+        {
+            BOOTLOG("[boot] LIBSD/FREESD: both failed - audio will be silent\n");
+        }
+    }
+    BOOTLOG("[boot] LIBSD/FREESD done\n");
+
+    BOOTLOG("[boot] AUDSRV.IRX: try load\n");
+    if (IOPLoadModule("AUDSRV.IRX", ppSearchPaths, 0, NULL) >= 0)
+    {
+        BOOTLOG("[boot] SjPCM_Init() (audsrv backend)\n");
 	    if (SjPCM_Init(0, 960*25, SJPCMMIXBUFFER_MAXENQUEUE) >= 0)
 	    {
 	        _MainLoop_bSjPCMReady = TRUE;
@@ -360,13 +373,10 @@ void _MainLoopLoadModules(Char **ppSearchPaths)
 	    {
 	        BOOTLOG("[boot] SjPCM_Init failed\n");
 	    }
-
-    //    SjPCM_Setvol(0x3FF);
-    //    SjPCM_Setvol(0);
     }
     else
     {
-        BOOTLOG("[boot] SJPCM2.IRX skipped (not available)\n");
+        BOOTLOG("[boot] AUDSRV.IRX skipped (not available)\n");
     }
 
 	#if 1

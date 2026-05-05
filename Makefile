@@ -77,6 +77,8 @@ LIBDIRS := \
 
 LIBS := \
 	-lmc -lpad -lps2ip \
+	-laudsrv \
+	-lpatches \
 	-lkernel -lc -lm -lstdc++ -lgcc
 
 SRCS := $(shell tr '\n' ' ' < ok-files.txt)
@@ -93,28 +95,36 @@ SDK_MC_IRX := mcman.irx mcserv.irx
 SDK_EXTRA_IRX := ioptrap.irx poweroff.irx
 
 CUSTOM_IRX_DIR ?= $(CURDIR)/irx
-CUSTOM_IRX := CDVD.IRX NETPLAY.IRX MCSAVE.IRX SJPCM2.IRX
+CUSTOM_IRX := CDVD.IRX NETPLAY.IRX MCSAVE.IRX
 
 # IRX modules embedded directly into the ELF via bin2c. The custom
 # IRX search paths (host:, cdrom:) used by the original code do not
 # work on emulators or stripped-down PS2 setups, so we ship these
 # modules inside the executable and load them via SifExecModuleBuffer.
 #
-# CDVD.IRX, SJPCM2.IRX and MCSAVE.IRX are intentionally NOT embedded:
+# Audio is provided by audsrv.irx from the PS2SDK
+# ($(PS2SDK)/iop/irx/audsrv.irx). It replaces the legacy SJPCM2.IRX,
+# whose RPC server was unreliable on modern IOPs / emulators - see
+# src/modules/sjpcm/sjpcm_rpc.c for the EE-side wrapper.
+#
+# CDVD.IRX and MCSAVE.IRX are intentionally NOT embedded:
 # on NetherSX2 (and likely any IOP that isn't a 100% faithful real PS2)
 # the iaddis custom IRXs do load via SifExecModuleBuffer, but their
 # RPC entry points either never come up or are incompatible with the
 # rom-resident services. The result is the EE-side init function
-# (CDVD_Init, SjPCM_Init, MCSave_Init) spinning forever in SifBindRpc
-# and deadlocking the boot. With these IRXs not embedded,
+# (CDVD_Init, MCSave_Init) spinning forever in SifBindRpc and
+# deadlocking the boot. With these IRXs not embedded,
 # IOPLoadModule("...") returns < 0 and the *_Init() call is skipped,
-# so the boot proceeds (audio + memory-card save are unavailable on
-# emulator, but the menu and the SNES CPU/PPU pipeline can run).
+# so the boot proceeds (memory-card save is unavailable on emulator,
+# but the menu and the SNES pipeline can run).
 # NETPLAY.IRX stays embedded - it's already gated on bLoadedNetwork
 # and is only loaded when the IP stack came up (i.e. real PS2 with
 # SMAP).
-EMBED_IRX_NAMES := netplay
+EMBED_IRX_NAMES := netplay audsrv freesd
 EMBED_HEADERS := $(patsubst %,$(EMBED_DIR)/%_irx.h,$(EMBED_IRX_NAMES))
+
+AUDSRV_IRX_PATH ?= $(PS2SDK)/iop/irx/audsrv.irx
+FREESD_IRX_PATH ?= $(PS2SDK)/iop/irx/freesd.irx
 
 .PHONY: all clean strip list count package package-irx check-env
 
@@ -140,9 +150,12 @@ $(EMBED_DIR):
 $(EMBED_DIR)/netplay_irx.h: $(CUSTOM_IRX_DIR)/NETPLAY.IRX | $(EMBED_DIR)
 	@echo "BIN2C $<"
 	@$(BIN2C) "$<" "$@" netplay_irx
-$(EMBED_DIR)/sjpcm2_irx.h: $(CUSTOM_IRX_DIR)/SJPCM2.IRX | $(EMBED_DIR)
+$(EMBED_DIR)/audsrv_irx.h: $(AUDSRV_IRX_PATH) | $(EMBED_DIR)
 	@echo "BIN2C $<"
-	@$(BIN2C) "$<" "$@" sjpcm2_irx
+	@$(BIN2C) "$<" "$@" audsrv_irx
+$(EMBED_DIR)/freesd_irx.h: $(FREESD_IRX_PATH) | $(EMBED_DIR)
+	@echo "BIN2C $<"
+	@$(BIN2C) "$<" "$@" freesd_irx
 $(EMBED_DIR)/mcsave_irx.h: $(CUSTOM_IRX_DIR)/MCSAVE.IRX | $(EMBED_DIR)
 	@echo "BIN2C $<"
 	@$(BIN2C) "$<" "$@" mcsave_irx

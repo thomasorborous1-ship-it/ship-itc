@@ -1,323 +1,348 @@
 /*
     ---------------------------------------------------------------------
-    sjpcm_rpc.c - SjPCM EE-side code. (c) Nick Van Veen (aka Sjeep), 2002
-	---------------------------------------------------------------------
+    sjpcm_rpc.c - audsrv-backed reimplementation of the SjPCM EE-side API.
+    ---------------------------------------------------------------------
 
-    This library is free software; you can redistribute it and/or
-	modify it under the terms of the GNU Lesser General Public
-	License as published by the Free Software Foundation; either
-	version 2.1 of the License, or (at your option) any later version.
+    The original SjPCM library (Nick Van Veen "Sjeep", 2002) talked to a
+    custom IOP-side IRX (SJPCM2.IRX) over SIF RPC. That precompiled IRX
+    pre-dates a number of changes in modern PS2SDK / IOP rom builds and
+    its RPC server either fails to register or hangs SifBindRpc on
+    emulators (NetherSX2/PCSX2 Qt) and stripped-down PS2 setups, which
+    is why the project had to disable the embedded SJPCM2.IRX entirely
+    (see src/platform/ps2/system/embedded_irx.cpp). Result: silent audio.
 
-	This library is distributed in the hope that it will be useful,
-	but WITHOUT ANY WARRANTY; without even the implied warranty of
-	MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
-	Lesser General Public License for more details.
+    The PS2DEV team replaced SjPCM with **audsrv** back in 2005:
+        https://forums.ps2dev.org/viewtopic.php?t=1500
+            "Audsrv comes to replace sjpcm, and provide an easy and
+             stable way to utilize the SPU2."
+    audsrv.irx ships with every modern PS2SDK at
+        $(PS2SDK)/iop/irx/audsrv.irx
+    and is the standard audio service used by SDL, ScummVM, OPL, etc.
 
-	You should have received a copy of the GNU Lesser General Public
-	License along with this library; if not, write to the Free Software
-	Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+    This file keeps the SjPCM_* API surface that SJPCMMixBuffer and
+    mainloop_iop.cpp call into, but the backend is now audsrv. Sample
+    format is fixed at the SPU2's native 48000 Hz / 16 bit / stereo,
+    which matches what SJPCMMixBuffer already converts the SNES output
+    to (see src/common/render/sjpcmbuffer.cpp). Left/right separated
+    channels are interleaved into a stereo buffer before being passed
+    to audsrv_play_audio().
 
+    audsrv exposes audsrv_queued() / audsrv_available() (in bytes), so
+    SjPCM_Buffered() / SjPCM_Available() map directly without needing
+    any time-based estimation.
 */
 
 #include <tamtypes.h>
 #include <kernel.h>
+#include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include <sifrpc.h>
-//#include <stdarg.h>
+#include <string.h>
+
+#include <audsrv.h>
+#include <sio.h>
+
 #include "sjpcm.h"
 
+/* ScrPrintf goes to the on-screen log (and stays there during the
+   splash). Plain printf on EE-side never reaches the emulator console
+   in this project, but ScrPrintf does survive long enough to be seen
+   in a screenshot of the boot screen. Forward-declare it here so we
+   don't have to drag the C++ mainloop_ui.h into this C file. */
+extern void ScrPrintf(const char *pFormat, ...);
 
-static unsigned sbuff[64] __attribute__((aligned (64)));
+/* Diagnostic printf helper for this project.
 
+   Plain printf() on the EE never seems to reach NetherSX2 / PCSX2's
+   emulator log file in this codebase (some piece of the libc->SIF->IOP
+   stdout wiring is missing). What *does* reach the emulator log is the
+   EE SIO TX FIFO at 0x1000f180: PCSX2 captures bytes written to it and
+   emits them on the EE_SIO log channel, which lands in the same console
+   /log file as the IOP "loadmodule:" / "audsrv_adpcm_init()" lines.
 
-static unsigned enqueue_sbuff[64] __attribute__((aligned (64)));
-static unsigned enqueue_rbuff[64] __attribute__((aligned (64)));
+   We therefore route diagnostics through sio_putsn() (writes to EE SIO
+   TX FIFO byte-by-byte) and also mirror them to ScrPrintf so the user
+   sees them on the on-screen splash log. sio_init() is called lazily
+   on first use with the standard 38400 8N1 setting.
 
-static unsigned buffered_sbuff[64] __attribute__((aligned (64)));
-static unsigned buffered_rbuff[64] __attribute__((aligned (64)));
+   Tag: each line is prefixed with "[snes-aud] " so the user can grep
+   the log file. */
+static int   _sio_inited = 0;
+static char  _dlog_buf[256];
 
-static SifRpcClientData_t cd0;
-
-int sjpcm_inited = 0;
-int pcmbufl, pcmbufr;
-int bufpos;
-
-static int _Buffered = 0;
-
-static int _sjpcm_sema;
-
-
-#if 0
-void SjPCM_Puts(char *format, ...)
+/* Non-static so other translation units can extern it for one-off
+   audio-path tracing. Mirror of the local prototype:
+       extern void DLog(const char *fmt, ...);
+   See mainloop_process.cpp / sjpcmbuffer.cpp where this is called
+   via that extern declaration. */
+void DLog(const char *fmt, ...)
 {
-	static char buff[4096];
-    va_list args;
-    int rv;
+    va_list ap;
+    int n;
 
-	if(!sjpcm_inited) return;
+    if (!_sio_inited)
+    {
+        sio_init(38400, 0, 0, 0, 0);
+        _sio_inited = 1;
+    }
 
-    va_start(args, format);
-    rv = vsnprintf(buff, 4096, format, args);
+    va_start(ap, fmt);
+    n = vsnprintf(_dlog_buf, sizeof(_dlog_buf) - 2, fmt, ap);
+    va_end(ap);
+    if (n < 0) return;
+    if (n > (int)sizeof(_dlog_buf) - 2) n = sizeof(_dlog_buf) - 2;
 
-	memcpy((char*)(&sbuff[0]),buff,252);
-	SifCallRpc(&cd0,SJPCM_PUTS,0,(void*)(&sbuff[0]),252,(void*)(&sbuff[0]),252,0,0);
-}
-#endif
+    /* Make sure the line ends with \n so the emulator log flushes it. */
+    if (n == 0 || _dlog_buf[n - 1] != '\n')
+    {
+        _dlog_buf[n++] = '\n';
+        _dlog_buf[n]   = '\0';
+    }
 
-void SjPCM_Play()
-{
-	if(!sjpcm_inited) return;
-
-	SifCallRpc(&cd0,SJPCM_PLAY,0,(void*)(&sbuff[0]),0,(void*)(&sbuff[0]),0,0,0);
-}
-
-void SjPCM_Pause()
-{
-	if(!sjpcm_inited) return;
-
-	SifCallRpc(&cd0,SJPCM_PAUSE,0,(void*)(&sbuff[0]),0,(void*)(&sbuff[0]),0,0,0);
-}
-
-void SjPCM_Setvol(unsigned int volume)
-{
-	if(!sjpcm_inited) return;
-
-	sbuff[5] = volume&0x3fff;
-	SifCallRpc(&cd0,SJPCM_SETVOL,0,(void*)(&sbuff[0]),64,(void*)(&sbuff[0]),64,0,0);
+    sio_putsn(_dlog_buf);
 }
 
-void SjPCM_Clearbuff()
-{
-	if(!sjpcm_inited) return;
 
-	SifCallRpc(&cd0,SJPCM_CLEARBUFF,0,(void*)(&sbuff[0]),0,(void*)(&sbuff[0]),0,0,0);
-}
+/*
+    Output is fixed 48000 Hz / 16 bit / stereo (SPU2 native).
+    SJPCMMixBuffer already up-samples 32000 Hz SNES audio to 48000 Hz
+    before calling SjPCM_Enqueue, so audsrv runs without any internal
+    upsampling.
+*/
+#define SJPCM_AUDSRV_FREQ      48000
+#define SJPCM_AUDSRV_BITS      16
+#define SJPCM_AUDSRV_CHANNELS  2
+#define SJPCM_BYTES_PER_SAMPLE (SJPCM_AUDSRV_CHANNELS * (SJPCM_AUDSRV_BITS / 8)) /* 4 */
+
+
+/*
+    Static interleave scratch sized for the worst case the engine will
+    ever pass into SjPCM_Enqueue. SJPCMMIXBUFFER_MAXENQUEUE in
+    sjpcmbuffer.h is currently (800 * 5) = 4000 samples per channel.
+    Round up to 4096 for alignment headroom.
+*/
+#define SJPCM_MAX_ENQUEUE_SAMPLES 4096
+static short _interleave_buf[SJPCM_MAX_ENQUEUE_SAMPLES * SJPCM_AUDSRV_CHANNELS]
+    __attribute__((aligned(64)));
+
+
+static int sjpcm_inited = 0;
+
 
 int SjPCM_Init(int sync, int numsamples, int maxenqueuesamples)
 {
-	int i;
-    ee_sema_t compSema;
+    struct audsrv_fmt_t fmt;
+    int ret;
 
-/*
-	do {
-        if (sif_bind_rpc(&cd0, SJPCM_IRX, 0) < 0) {
-            return -1;
-        }
-        nopdelay();
-    } while(!cd0.server);
-*/
-	while(1){
-		if (SifBindRpc( &cd0, SJPCM_IRX, 0) < 0) return -1; // bind error
- 		if (cd0.server != 0) break;
-    	i = 0x10000;
-    	while(i--);
-	}
+    (void)sync;
+    (void)numsamples;
+    (void)maxenqueuesamples;
 
-	sbuff[0] = sync;
-    sbuff[1] = numsamples;
-    sbuff[2] = maxenqueuesamples;
+    if (sjpcm_inited)
+    {
+        return 0;
+    }
 
-	FlushCache(0);
+    DLog("[snes-aud] audsrv_init() ...");
+    ret = audsrv_init();
+    DLog("[snes-aud] audsrv_init() = %d", ret);
+    if (ret != 0)
+    {
+        DLog("[snes-aud] init FAILED %d (%s)",
+             ret, audsrv_get_error_string());
+        return -1;
+    }
 
-	SifCallRpc(&cd0,SJPCM_INIT,0,(void*)(&sbuff[0]),64,(void*)(&sbuff[0]),64,0,0);
+    fmt.freq     = SJPCM_AUDSRV_FREQ;
+    fmt.bits     = SJPCM_AUDSRV_BITS;
+    fmt.channels = SJPCM_AUDSRV_CHANNELS;
 
-	FlushCache(0);
+    ret = audsrv_set_format(&fmt);
+    DLog("[snes-aud] set_format(48000,16,2) = %d", ret);
+    if (ret != 0)
+    {
+        DLog("[snes-aud] set_format FAILED %d (%s)",
+             ret, audsrv_get_error_string());
+        audsrv_quit();
+        return -1;
+    }
 
-	pcmbufl = sbuff[1];
-	pcmbufr = sbuff[2];
-	bufpos = sbuff[3];
+    /* Default to full volume. SjPCM_Setvol() may override. */
+    ret = audsrv_set_volume(MAX_VOLUME);
+    DLog("[snes-aud] set_volume(%d) = %d", MAX_VOLUME, ret);
 
-
-    compSema.init_count = 1;
-	compSema.max_count = 1;
-	compSema.option = 0;
-	_sjpcm_sema = CreateSema(&compSema);
-	if (_sjpcm_sema < 0)
-		return -1;
-
-	sjpcm_inited = 1;
-
-    SjPCM_BufferedAsyncStart();
-    SjPCM_BufferedAsyncGet();
-
-	return 0;
+    sjpcm_inited = 1;
+    return 0;
 }
 
-#include "types.h"
-#include "prof.h"
 
-// size should either be either 800 (NTSC) or 960 (PAL)
+void SjPCM_Quit(void)
+{
+    if (!sjpcm_inited) return;
+    audsrv_stop_audio();
+    audsrv_quit();
+    sjpcm_inited = 0;
+}
+
+
+/*
+    The original API was pause/play; audsrv plays continuously while
+    samples are queued, so Play is effectively "make sure not stopped"
+    and Pause is "drop the queue". SjPCMMixBuffer calls
+    SjPCM_Clearbuff() + SjPCM_Play() once at boot.
+*/
+void SjPCM_Play(void)
+{
+    /* nothing to do - audsrv plays as soon as samples are enqueued */
+}
+
+
+void SjPCM_Pause(void)
+{
+    if (!sjpcm_inited) return;
+    audsrv_stop_audio();
+}
+
+
+void SjPCM_Clearbuff(void)
+{
+    if (!sjpcm_inited) return;
+    audsrv_stop_audio();
+}
+
+
+/*
+    SjPCM_Setvol took a 14-bit hardware-style volume (0..0x3FFF) where
+    0x3FFF was full scale. audsrv's volume is 0..MAX_VOLUME (100), so
+    rescale.
+*/
+void SjPCM_Setvol(unsigned int volume)
+{
+    int v;
+
+    if (!sjpcm_inited) return;
+
+    volume &= 0x3FFF;
+    v = (int)((volume * MAX_VOLUME) / 0x3FFF);
+    if (v < MIN_VOLUME) v = MIN_VOLUME;
+    if (v > MAX_VOLUME) v = MAX_VOLUME;
+
+    audsrv_set_volume(v);
+}
+
+
+/*
+    Bytes already queued in audsrv's IOP-side ring buffer, expressed as
+    stereo sample-frames so the math in SJPCMMixBuffer::GetOutputSamples
+    keeps working unchanged.
+*/
+int SjPCM_Buffered(void)
+{
+    int bytes;
+
+    if (!sjpcm_inited) return 0;
+
+    bytes = audsrv_queued();
+    if (bytes < 0) return 0;
+
+    return bytes / SJPCM_BYTES_PER_SAMPLE;
+}
+
+
+int SjPCM_Available(void)
+{
+    int bytes;
+
+    if (!sjpcm_inited) return 0;
+
+    bytes = audsrv_available();
+    if (bytes < 0) return 0;
+
+    return bytes / SJPCM_BYTES_PER_SAMPLE;
+}
+
+
+/*
+    Interleave separate left/right channels and push to audsrv. `wait`
+    selects between blocking until enough room is available
+    (audsrv_wait_audio) and best-effort (drop overflow if the IOP ring
+    is full).
+*/
 void SjPCM_Enqueue(short *left, short *right, int size, int wait)
 {
     int i;
-    SifDmaTransfer_t sdt;
+    int bytes;
+    int ret;
+    static int call_count = 0;
 
     if (!sjpcm_inited) return;
+    if (size <= 0) return;
+    if (size > SJPCM_MAX_ENQUEUE_SAMPLES) size = SJPCM_MAX_ENQUEUE_SAMPLES;
 
-    sdt.src = (void *)left;
-    sdt.dest = (void *)(pcmbufl + bufpos);
-    sdt.size = size*2;
-    sdt.attr = 0;
+    for (i = 0; i < size; i++)
+    {
+        _interleave_buf[i * 2 + 0] = left[i];
+        _interleave_buf[i * 2 + 1] = right[i];
+    }
 
-    PROF_ENTER("FlushCache0");
-	FlushCache(0);
-    PROF_LEAVE("FlushCache0");
-    
+    bytes = size * SJPCM_BYTES_PER_SAMPLE;
 
-    i = SifSetDma(&sdt, 1); // start dma transfer
-    while ((wait != 0) && (SifDmaStat(i) >= 0)); // wait for completion of dma transfer
+    if (wait)
+    {
+        audsrv_wait_audio(bytes);
+    }
 
-    sdt.src = (void *)right;
-    sdt.dest = (void *)(pcmbufr + bufpos);
-    sdt.size = size*2;
-    sdt.attr = 0;
+    ret = audsrv_play_audio((const char *)_interleave_buf, bytes);
 
-    PROF_ENTER("FlushCache0");
-	FlushCache(0);
-    PROF_LEAVE("FlushCache0");
-
-    i = SifSetDma(&sdt, 1);
-    while ((wait != 0) && (SifDmaStat(i) >= 0));
-
-    PROF_ENTER("SifCallRpc");
-	sbuff[0] = size;
-	SifCallRpc(&cd0,SJPCM_ENQUEUE,0,(void*)(&sbuff[0]),64,(void*)(&sbuff[0]),64,0,0);
-	bufpos = sbuff[3];
-    PROF_LEAVE("SifCallRpc");
-    
-//    printf("done enqueue: %d\n", bufpos);
-} 
+    /* DLog only goes through SIO so we can spam it at a few-Hz cadence
+       without tanking the framerate (sio_putsn is a few hundred MMIO
+       writes, no GS render). Print every 64th call (~1 s of audio at
+       60 Hz) so we can see the queued/available counters move. */
+    if ((call_count & 0x3F) == 0)
+    {
+        int q = audsrv_queued();
+        int a = audsrv_available();
+        DLog("[snes-aud] enq#%d size=%d bytes=%d ret=%d queued=%d avail=%d",
+             call_count, size, bytes, ret, q, a);
+    }
+    call_count++;
+}
 
 
-
-//
-//
-//
-
-void _SjPCM_EnqueueIntr(unsigned *arg)
+/*
+    The original async API let SjPCMMixBuffer overlap RPC traffic with
+    the next SNES frame via a SIF callback + semaphore handshake.
+    audsrv_play_audio is already non-blocking when there is room in the
+    ring buffer, and audsrv_wait_audio handles back-pressure when there
+    isn't, so the async path collapses into the synchronous one.
+*/
+void SjPCM_BufferedAsyncStart(void)
 {
-    // get buffer position
-	bufpos = arg[3];
-
-	iSignalSema(_sjpcm_sema);
+    /* nothing to do - audsrv tracks queued bytes internally */
 }
 
-void SjPCM_Sync()
-{   
-	WaitSema(_sjpcm_sema);
-	SignalSema(_sjpcm_sema);
+
+int SjPCM_BufferedAsyncGet(void)
+{
+    return SjPCM_Buffered();
 }
 
-// size should either be either 800 (NTSC) or 960 (PAL)
+
 void SjPCM_EnqueueAsync(short *left, short *right, int size)
 {
-    int i;
-    SifDmaTransfer_t sdt;
-    int wait = 0;
-
-    if (!sjpcm_inited) return;
-    
-    PROF_ENTER("SjPCM_EnqueueWait");
-    WaitSema(_sjpcm_sema);
-    PROF_LEAVE("SjPCM_EnqueueWait");
-
-    sdt.src = (void *)left;
-    sdt.dest = (void *)(pcmbufl + bufpos);
-    sdt.size = size*2;
-    sdt.attr = 0;
-
-    PROF_ENTER("FlushCache0");
-	FlushCache(0);
-    PROF_LEAVE("FlushCache0");
-    
-
-    i = SifSetDma(&sdt, 1); // start dma transfer
-    while ((wait != 0) && (SifDmaStat(i) >= 0)); // wait for completion of dma transfer
-
-    sdt.src = (void *)right;
-    sdt.dest = (void *)(pcmbufr + bufpos);
-    sdt.size = size*2;
-    sdt.attr = 0;
-
-    PROF_ENTER("FlushCache0");
-	FlushCache(0);
-    PROF_LEAVE("FlushCache0");
-
-    i = SifSetDma(&sdt, 1);
-    while ((wait != 0) && (SifDmaStat(i) >= 0));
-
-    PROF_ENTER("SifCallRpc");
-	enqueue_sbuff[0] = size;
-  
-    // perform async rpc
-    SifWriteBackDCache(enqueue_rbuff, 64);
-    
-	SifCallRpc(&cd0,SJPCM_ENQUEUE,1,(void*)(&enqueue_sbuff[0]),64,(void*)(&enqueue_rbuff[0]),64,(SifRpcEndFunc_t)_SjPCM_EnqueueIntr,enqueue_rbuff);
-    PROF_LEAVE("SifCallRpc");
-} 
-
-
-void _SjPCM_BufferedIntr(unsigned *arg)
-{
-    // get buffer samples enqueued
-	_Buffered = arg[3];
-
-	iSignalSema(_sjpcm_sema);
+    SjPCM_Enqueue(left, right, size, 0);
 }
 
 
-void SjPCM_BufferedAsyncStart()
+void SjPCM_Wait(void)
 {
-  if (!sjpcm_inited) return;
-
-  PROF_ENTER("SjPCM_BufferedWait");
-  WaitSema(_sjpcm_sema);
-  PROF_LEAVE("SjPCM_BufferedWait");
-
-  SifWriteBackDCache(buffered_rbuff, 64);
-
-  // perform async rpc
-  SifCallRpc(&cd0,SJPCM_GETBUFFD,0,(void*)(&buffered_sbuff[0]),64,(void*)(&buffered_rbuff[0]),64,(SifRpcEndFunc_t)_SjPCM_BufferedIntr,buffered_rbuff);
+    /* audsrv ring-buffer back-pressure is handled inside Enqueue via
+       audsrv_wait_audio when the caller passes wait=1, so there is no
+       extra synchronisation to perform here. */
 }
 
 
-int SjPCM_IsInitialized()
+int SjPCM_IsInitialized(void)
 {
     return sjpcm_inited;
-}
-
-int SjPCM_BufferedAsyncGet()
-{
-  if (!sjpcm_inited) return 0;
-
-  PROF_ENTER("SjPCM_BufferedWait");
-  SjPCM_Sync();
-  PROF_LEAVE("SjPCM_BufferedWait");
-  
-  return _Buffered;
-}
-
-
-
-int SjPCM_Available()
-{
-  if (!sjpcm_inited) return 0;
-  SifCallRpc(&cd0,SJPCM_GETAVAIL,0,(void*)(&sbuff[0]),64,(void*)(&sbuff[0]),64,0,0);
-  return sbuff[3];
-}
-
-int SjPCM_Buffered()
-{
-  if (!sjpcm_inited) return 0;
-  SifCallRpc(&cd0,SJPCM_GETBUFFD,0,(void*)(&sbuff[0]),64,(void*)(&sbuff[0]),64,0,0);
-  return sbuff[3];
-}
-
-void SjPCM_Quit()
-{
-	if(!sjpcm_inited) return;
-
-	SifCallRpc(&cd0,SJPCM_QUIT,0,(void*)(&sbuff[0]),0,(void*)(&sbuff[0]),0,0,0);
-	sjpcm_inited = 0;
 }
