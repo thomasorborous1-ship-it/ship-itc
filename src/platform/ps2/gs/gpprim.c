@@ -178,6 +178,14 @@ void GPPrimUploadTexture(int TBP, int TBW, int xofs, int yofs,
     }
 
     {
+        /* gsKit's texture-send helpers take the destination address
+           in BYTES and divide by 256 internally to encode
+           BITBLTBUF.DBP. The legacy SNESticle TBP is in 256-byte
+           units, so multiply once to get a byte address. Earlier we
+           were dividing again right before the call, which placed
+           the upload 256x closer to the start of VRAM than the
+           sampler later read from - the textures landed in the
+           wrong page and every textured prim came out blank. */
         u32 tbp_bytes = (u32)TBP * 256U;
         u32 tbw_pages = (u32)TBW / 64U;
         if (tbw_pages == 0) {
@@ -185,7 +193,7 @@ void GPPrimUploadTexture(int TBP, int TBW, int xofs, int yofs,
         }
         gsKit_texture_send_inline(gs, (u32 *)tex,
                                   wpxls, hpxls,
-                                  tbp_bytes / 256U, /* gsKit wants TBP in 256B units */
+                                  tbp_bytes, /* bytes; gsKit divides by 256 */
                                   pxlfmt,
                                   tbw_pages,
                                   GS_CLUT_NONE);
