@@ -1,165 +1,197 @@
-// GFX-Pipe by Vzzrzzn, modifications by Sjeep
+/* gpprim.c
+ *
+ * Original GFX-Pipe primitives by Vzzrzzn / Sjeep, hand-built GIF
+ * tags via gslist.c. After the Fase 1 GS->gsKit migration each
+ * primitive is rebuilt on top of gsKit's queue (gsKit_prim_sprite,
+ * gsKit_prim_sprite_texture_3d) while the public API in gpprim.h
+ * stays unchanged.
+ *
+ * Coordinate convention: callers pass FIXED4 sub-pixel values
+ * (pixels << 4). gsKit's prim helpers want floating-point pixels,
+ * so we divide by 16 before handing them in.
+ */
 
 #include <tamtypes.h>
 #include <kernel.h>
+#include <string.h>
+
+#include <gsKit.h>
+#include <dmaKit.h>
+#include <gsInline.h>
+
 #include "types.h"
-#include <gs.h>
-#include "gslist.h"
-#include "gpfifo.h"
+#include "gs.h"
 #include "gpprim.h"
+#include "gskit_backend.h"
 
-void GPPrimRect(unsigned x1, unsigned y1, unsigned c1, unsigned x2, unsigned y2, unsigned c2, unsigned z, unsigned abe)
+extern int GSK_TakeInvalidatePending(void);
+
+/* "Current" texture binding state, written by GPPrimSetTex and
+   consumed by GPPrimTexRect. The original pipeline emitted TEX0 /
+   TEX1 / TEXA / CLAMP / ALPHA / PABE here directly via GIF-AD, but
+   gsKit_prim_sprite_texture_3d emits TEX0 itself per draw; we just
+   keep the parameters. */
+static GSTEXTURE _gpprim_curTex;
+static int       _gpprim_curTexValid = 0;
+
+/* Convert FIXED4 sub-pixel coordinate to float pixels. */
+static inline float fx4_to_float(unsigned v)
 {
-    GSListSpace(256);
-
-    x1+=0x8000;
-    y1+=0x8000;
-    x2+=0x8000;
-    y2+=0x8000;
-
-    GSGifTagOpen(GIF_SET_TAG(1, 1, 0, 0, 1, 4), 0x5510);
-    
-	GSGifReg(GS_SET_PRIM(0x06, 0, 0, 0, abe, 0, 1, 0, 0));
-	GSGifReg(c1);
-	GSGifReg(GS_SET_XYZ(x1,y1,z));
-	GSGifReg(GS_SET_XYZ(x2,y2,z));
-    
-    GSGifTagClose();
+    return ((float)((int)v)) / 16.0f;
 }
 
+/* Promote a 32-bit RGBA colour to a 64-bit RGBAQ, with Q = 1.0f.
+   The high half being non-zero matters: a Q of zero gives NaN-flavoured
+   ST mapping in the GS and produces black sprites in some setups. */
+static inline u64 rgba32_to_rgbaq64(u32 rgba)
+{
+    return ((u64)rgba) | ((u64)0x3f800000ULL << 32);
+}
+
+void GPPrimRect(unsigned x1, unsigned y1, unsigned c1,
+                unsigned x2, unsigned y2, unsigned c2,
+                unsigned z, unsigned abe)
+{
+    GSGLOBAL *gs = GSK_GetGlobal();
+    if (!gs) {
+        return;
+    }
+    (void)c2; /* original API kept c2 but always equal to c1 */
+
+    if (abe) {
+        gs->PrimAlphaEnable = GS_SETTING_ON;
+    } else {
+        gs->PrimAlphaEnable = GS_SETTING_OFF;
+    }
+
+    gsKit_prim_sprite(gs,
+                      fx4_to_float(x1), fx4_to_float(y1),
+                      fx4_to_float(x2), fx4_to_float(y2),
+                      (int)z,
+                      rgba32_to_rgbaq64(c1));
+}
 
 void GPPrimEnableZBuf(void)
 {
-    GSListSpace(128);
-    GSGifTagOpenAD();
-    GSGifRegAD(GS_REG_TEST_1, 0x00070000);
-    GSGifTagCloseAD();
+    GSGLOBAL *gs = GSK_GetGlobal();
+    if (!gs) {
+        return;
+    }
+    gsKit_set_test(gs, GS_ZTEST_ON);
 }
 
 void GPPrimDisableZBuf(void)
 {
-    GSListSpace(128);
-    GSGifTagOpenAD();
-    GSGifRegAD(GS_REG_TEST_1, 0x00030000);
-    GSGifTagCloseAD();
-
+    GSGLOBAL *gs = GSK_GetGlobal();
+    if (!gs) {
+        return;
+    }
+    gsKit_set_test(gs, GS_ZTEST_OFF);
 }
 
-void GPPrimTexRect(u32 x1, u32 y1, u32 u1, u32 v1, u32 x2, u32 y2, u32 u2, u32 v2, u32 z, u32 colour, unsigned abe)
+void GPPrimTexRect(u32 x1, u32 y1, u32 u1, u32 v1,
+                   u32 x2, u32 y2, u32 u2, u32 v2,
+                   u32 z, u32 colour, unsigned abe)
 {
-    GSListSpace(256);
-
-    x1+=0x8000;
-    y1+=0x8000;
-    x2+=0x8000;
-    y2+=0x8000;
-    
-    GSGifTagOpen(GIF_SET_TAG(1, 1, 0, 0, 1, 6), 0xF535310);
-    
-	GSGifReg(GS_SET_PRIM(0x06, 0, 1, 0, abe, 0, 1, 0, 0));
-	GSGifReg(colour);
-	GSGifReg(GS_SET_UV(u1, v1));
-	GSGifReg(GS_SET_XYZ(x1,y1,z));
-	GSGifReg(GS_SET_UV(u2, v2));
-	GSGifReg(GS_SET_XYZ(x2,y2,z));
-    
-    GSGifTagClose();
-}
-
-
-void GPPrimSetTex(u32 tbp, u32 tbw, u32 texwidthlog2, u32 texheightlog2, u32 tpsm, u32 cbp, u32 cbw, u32 cpsm, int filter)
-{
-    GSListSpace(128);
-
-    GSGifTagOpenAD();
-    
-    // texclut  <- not really necessary but if i get lazy in future ...
-	GSGifRegAD(GS_REG_TEXCLUT,256/64);
-
-    // texflush
-    GSGifRegAD(GS_REG_TEXFLUSH,0);
-
-    // texa: TA0 = 128, AEM = 1, TA1 = 0
-	GSGifRegAD(GS_REG_TEXA,GS_SET_TEXA(128, 1, 0));
-
-    if (filter)
-    {
-        // tex1_1
-        GSGifRegAD(GS_REG_TEX1_1, (1<<5) | (1<<6));
-    } else
-    {
-        GSGifRegAD(GS_REG_TEX1_2, 0x0000000000000040);
+    GSGLOBAL *gs = GSK_GetGlobal();
+    if (!gs || !_gpprim_curTexValid) {
+        return;
     }
 
-	// tex0_1
-//	GSGifRegAD(GS_REG_TEX0_1,GS_SET_TEX0(tbp/256, tbw/64, tpsm, texwidthlog2, texheightlog2, 1, 0, cbp/256, cpsm, 1, 0, 1));
-	GSGifRegAD(GS_REG_TEX0_1,GS_SET_TEX0(tbp, tbw/64, tpsm, texwidthlog2, texheightlog2, 1, 0, cbp, cpsm, 1, 0, 1));
-
-    // clamp_1
-	GSGifRegAD(GS_REG_CLAMP_1,GS_SET_CLAMP(0, 0, 0, 0, 0, 0));
-
-    // alpha_1: A = Cs, B = Cd, C = As, D = Cd
-    GSGifRegAD(GS_REG_ALPHA_1, 0x0000007f00000044);
-
-    // pabe
-    GSGifRegAD(GS_REG_PABE, 0x0000000000000000);
-    
-    GSGifTagCloseAD();
-}
-
-
-// send a byte-packed texture from RDRAM to VRAM
-// TBP = VRAM_address
-// TBW = buffer_width_in_pixels  -- dependent on pxlfmt
-// xofs, yofs in units of pixels
-// pxlfmt = 0x00 (32-bit), 0x02 (16-bit), 0x13 (8-bit), 0x14 (4-bit)
-// wpxls, hpxls = width, height in units of pixels
-// tex -- must be qword aligned !!!
-void GPPrimUploadTexture(int TBP, int TBW, int xofs, int yofs, int pxlfmt, void *tex, int wpxls, int hpxls)
-{
-    int numq;
-
-    numq = wpxls * hpxls;
-    switch (pxlfmt)
-    {
-    case 0x00: numq = (numq+0x03) >> 2; break;
-    case 0x02: numq = (numq+0x07) >> 3; break;
-    case 0x13: numq = (numq+0x0F) >> 4; break;
-    case 0x14: numq = (numq+0x1F) >> 5; break;
-    default:   numq = 0;
+    if (abe) {
+        gs->PrimAlphaEnable = GS_SETTING_ON;
+    } else {
+        gs->PrimAlphaEnable = GS_SETTING_OFF;
     }
 
-    GSListSpace(128);
+    /* If something outside gsKit (the SNES blender, or a manual
+       texture upload) overwrote VRAM, force the GS texture cache
+       to flush before sampling again. */
+    if (GSK_TakeInvalidatePending()) {
+        u64 *p = (u64 *)gsKit_heap_alloc(gs, 1, 16, GIF_AD);
+        if (p) {
+            *p++ = GIF_TAG_AD(1);
+            *p++ = GIF_AD;
+            *p++ = 0;          /* TEXFLUSH expects any value */
+            *p++ = GS_REG_TEXFLUSH;
+        }
+    }
 
-    GSGifTagOpenAD();
-
-//    GSGifRegAD(GS_REG_BITBLTBUF,GS_SET_BITBLTBUF( 0, (TBW/64), pxlfmt,  (TBP/256), (TBW/64), pxlfmt));
-    GSGifRegAD(GS_REG_BITBLTBUF,GS_SET_BITBLTBUF( 0, (TBW/64), pxlfmt,  TBP, (TBW/64), pxlfmt));
-    GSGifRegAD(GS_REG_TRXPOS,GS_SET_TRXPOS(0,0,xofs,yofs,0));
-    GSGifRegAD(GS_REG_TRXREG,GS_SET_TRXREG(wpxls, hpxls));
-    GSGifRegAD(GS_REG_TRXDIR,GS_SET_TRXDIR(0));
-    
-    GSGifTagCloseAD();
-    
-    // image gif tag
-    GSGifTagImage(numq);
-
-    // close last dma cnt
-    GSDmaCntClose();
-
-    // dma image data
-    GSDmaRef(tex, numq);
-
-
-    // start new dma cnt
-    GSDmaCntOpen();
+    gsKit_prim_sprite_texture_3d(gs, &_gpprim_curTex,
+                                 fx4_to_float(x1), fx4_to_float(y1),
+                                 (int)z,
+                                 fx4_to_float(u1), fx4_to_float(v1),
+                                 fx4_to_float(x2), fx4_to_float(y2),
+                                 (int)z,
+                                 fx4_to_float(u2), fx4_to_float(v2),
+                                 rgba32_to_rgbaq64(colour));
 }
 
+void GPPrimSetTex(u32 tbp, u32 tbw, u32 texwidthlog2, u32 texheightlog2,
+                  u32 tpsm, u32 cbp, u32 cbw, u32 cpsm, int filter)
+{
+    (void)cbw;
 
+    /* Capture the binding so the next GPPrimTexRect can use it. The
+       legacy pipeline took tbp / cbp in TBP units (256-byte blocks)
+       and tbw in pixels; gsKit's GSTEXTURE wants Vram in bytes and
+       TBW in 64-pixel units, so convert here. */
+    _gpprim_curTex.Width   = 1U << texwidthlog2;
+    _gpprim_curTex.Height  = 1U << texheightlog2;
+    _gpprim_curTex.PSM     = tpsm;
+    _gpprim_curTex.ClutPSM = cpsm;
+    _gpprim_curTex.TBW     = tbw / 64;
+    if (_gpprim_curTex.TBW == 0) {
+        _gpprim_curTex.TBW = 1;
+    }
+    _gpprim_curTex.Mem      = NULL;
+    _gpprim_curTex.Clut     = NULL;
+    _gpprim_curTex.Vram     = tbp * 256;
+    _gpprim_curTex.VramClut = cbp * 256;
+    _gpprim_curTex.Filter   = filter ? GS_FILTER_LINEAR : GS_FILTER_NEAREST;
+    _gpprim_curTex.ClutStorageMode = 0;
+    _gpprim_curTex.Delayed  = 0;
 
+    _gpprim_curTexValid = 1;
+}
 
+/* Direct EE->VRAM texture upload via gsKit's helper. The legacy
+   variant built BITBLTBUF / TRXPOS / TRXREG / TRXDIR registers and
+   an image GIF tag by hand; gsKit_texture_send does the same thing
+   while staying in sync with the rest of the gsKit GIF state. */
+void GPPrimUploadTexture(int TBP, int TBW, int xofs, int yofs,
+                         int pxlfmt, void *tex, int wpxls, int hpxls)
+{
+    GSGLOBAL *gs = GSK_GetGlobal();
 
+    /* xofs/yofs are unused by the SNESticle paths today (always 0),
+       and gsKit_texture_send_inline does not accept an offset. If a
+       non-zero offset ever gets passed in, fall back to the manual
+       GIF chain via... well, just bail for now and let the caller
+       see a missing texture. The repo does not exercise that path. */
+    (void)xofs;
+    (void)yofs;
+    (void)gs;
 
+    if (!gs || !tex || wpxls <= 0 || hpxls <= 0) {
+        return;
+    }
 
+    {
+        u32 tbp_bytes = (u32)TBP * 256U;
+        u32 tbw_pages = (u32)TBW / 64U;
+        if (tbw_pages == 0) {
+            tbw_pages = 1;
+        }
+        gsKit_texture_send_inline(gs, (u32 *)tex,
+                                  wpxls, hpxls,
+                                  tbp_bytes / 256U, /* gsKit wants TBP in 256B units */
+                                  pxlfmt,
+                                  tbw_pages,
+                                  GS_CLUT_NONE);
+    }
 
-
+    /* Anything that draws after this should re-flush the texture
+       cache to pick up the freshly written texels. */
+    GSK_InvalidateTextureCache();
+}

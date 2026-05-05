@@ -33,6 +33,7 @@ extern "C" {
 #include "gs.h"
 #include "gpfifo.h"
 #include "gpprim.h"
+#include "gskit_backend.h"
 };
 
 extern "C" {
@@ -248,19 +249,21 @@ void MainLoopRender()
     GPFifoFlush();
     PROF_LEAVE("GPFlush");
 
+    /* gsKit_sync_flip waits for vsync, swaps the display buffer
+       and resets gsKit's draw queue for the next frame. The
+       legacy WaitForNextVRstart / GS_SetCrtFB / GS_SetDrawFB
+       block is now subsumed by this single call. */
     PROF_ENTER("WaitVBlank");
-
     if ( (_iFrame&15)==0)   _uVblankCycle = ProfCtrGetCycle();
-	WaitForNextVRstart(1);
+    GSK_SyncFlip();
     if ( (_iFrame&15)==0)   _uVblankCycle = ProfCtrGetCycle() - _uVblankCycle;
-
     PROF_LEAVE("WaitVBlank");
 
-    PROF_ENTER("GSSetCrt");
-    GS_SetCrtFB(whichdrawbuf);
+    /* whichdrawbuf is now decorative - gsKit owns the active
+       framebuffer index via gsGlobal->ActiveBuffer. Keep it
+       alive so the diff against the original is small. */
     whichdrawbuf ^= 1;
-    GS_SetDrawFB(whichdrawbuf);
-    PROF_LEAVE("GSSetCrt");
+    (void)whichdrawbuf;
 
     _iFrame++;
 }

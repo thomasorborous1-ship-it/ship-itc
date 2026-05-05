@@ -69,13 +69,20 @@ INCS := \
 	-I$(CURDIR)/src/third_party/miniz \
 	-I$(PS2SDK)/common/include \
 	-I$(PS2SDK)/ee/include \
-	-I$(PS2SDK)/ports/include
+	-I$(PS2SDK)/ports/include \
+	-I$(GSKIT)/include
 
 LIBDIRS := \
 	-L$(PS2SDK)/ee/lib \
-	-L$(PS2SDK)/ports/lib
+	-L$(PS2SDK)/ports/lib \
+	-L$(GSKIT)/lib
 
+# gsKit + dmaKit must come before the SDK's libgraph, because
+# gsKit pulls in DMA helpers from dmaKit and the linker resolves
+# left-to-right. Linking order is also why -lkernel/-lc/-lm/-lstdc++
+# is kept at the end.
 LIBS := \
+	-lgskit -ldmakit -lgskit_toolkit \
 	-lmc -lpad -lps2ip \
 	-laudsrv \
 	-lpatches \

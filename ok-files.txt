@@ -13,6 +13,7 @@ src/common/base/font.cpp
 src/platform/ps2/gs/gpfifo.c
 src/platform/ps2/gs/gpprim.c
 src/platform/ps2/gs/gs.c
+src/platform/ps2/gs/gskit_backend.c
 src/platform/ps2/gs/gslist.c
 src/platform/ps2/lowlevel/hw.s
 src/platform/ps2/input/input.cpp

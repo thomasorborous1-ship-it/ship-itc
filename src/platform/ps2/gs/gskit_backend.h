@@ -1,0 +1,63 @@
+/* gskit_backend.h
+ *
+ * gsKit-based backend for SNESticle's GS layer. Owns the GSGLOBAL
+ * pointer and exposes helpers used by gs.c, gpfifo.c, gpprim.c and
+ * the SNES blender to coexist on the same DMA path.
+ *
+ * Fase 1 GS->gsKit migration.
+ */
+
+#ifndef _GSKIT_BACKEND_H
+#define _GSKIT_BACKEND_H
+
+#include "types.h"
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+/* Fully initialise the GS via gsKit. Mirrors the parameter set used
+   by the original GS_InitGraph + GS_SetDispMode + GS_SetEnv calls.
+
+   width/height : framebuffer size in pixels (e.g. 256x240).
+   dispx/dispy  : display position (matches MAINLOOP_DISPX/Y).
+   psm/psmz     : pixel formats (GS_PSMCT32 / GS_PSMZ16S, etc).
+   mode         : 2 = NTSC, 3 = PAL (matches GS_NTSC / GS_PAL).
+   interlace    : 0 = non-interlaced, 1 = interlaced.
+
+   After this returns, GSK_GetGlobal() returns a usable GSGLOBAL *.
+*/
+void GSK_Init(int width, int height,
+              int dispx, int dispy,
+              int psm, int psmz,
+              int mode, int interlace);
+
+/* Returns the active gsKit global, or NULL if GSK_Init has not run. */
+struct gsGlobal *GSK_GetGlobal(void);
+
+/* Allocate a region of VRAM via gsKit's user buffer pool and return the
+   address in TBP units (i.e. byte_offset / 256). 0 on failure. */
+Uint32 GSK_VramAllocTBP(Uint32 nBytes);
+
+/* Drain gsKit's draw queue, wait for path-3 DMA to finish, and clear
+   the GIF channel. Use this before the SNES blender kicks its own raw
+   DMA chain on the GIF channel. */
+void GSK_DrainAndWait(void);
+
+/* Drain gsKit's draw queue and wait. Equivalent to GSK_DrainAndWait
+   but kept as a separate name for clarity in the per-frame flush. */
+void GSK_FlushFrame(void);
+
+/* Wait for VBlank, swap framebuffers and reset draw queues. Must be
+   called once per frame, after GSK_FlushFrame. */
+void GSK_SyncFlip(void);
+
+/* Force a TEXFLUSH next time we draw a textured prim. Used by the
+   SNES blender after it overwrites texture VRAM via raw DMA. */
+void GSK_InvalidateTextureCache(void);
+
+#ifdef __cplusplus
+}
+#endif
+
+#endif /* _GSKIT_BACKEND_H */

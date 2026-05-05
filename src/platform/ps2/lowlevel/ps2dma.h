@@ -81,7 +81,11 @@ typedef struct
 
 #define VIF0_STAT *((volatile Uint32 *)(0x10003800))
 #define VIF1_STAT *((volatile Uint32 *)(0x10003C00))
+/* gsKit's gsInit.h declares GIF_STAT as a pointer; guard ours so
+   both can coexist when gskit_backend.c includes both headers. */
+#ifndef GIF_STAT
 #define GIF_STAT  *((volatile Uint32 *)(0x10003020))
+#endif
 
 
 void DmaExecSprToRam(Uint128 *pMem, Uint128 *pSpr, Uint32 nQwords);
