@@ -10,6 +10,10 @@ extern "C" {
 #include "sjpcm.h"
 };
 
+/* Defined in sjpcm_rpc.c. Writes to EE SIO so the line shows up in
+   the emulator log alongside [snes-aud] enq#... entries. */
+extern "C" void DLog(const char *fmt, ...);
+
 
 SJPCMMixBuffer::SJPCMMixBuffer(Uint32 uSampleRate, Bool bAsync)
 {
@@ -36,7 +40,10 @@ Int32 SJPCMMixBuffer::GetOutputSamples()
 
     if (!SjPCM_IsInitialized())
     {
-        // we're not initialized
+        static int __gos_ni = 0;
+        if ((__gos_ni & 0x3F) == 0)
+            DLog("[snes-aud] gos: not-init #%d", __gos_ni);
+        __gos_ni++;
         return 0;
     }
 
@@ -44,8 +51,8 @@ Int32 SJPCMMixBuffer::GetOutputSamples()
 
     /*
      * Ask the audsrv backend how many sample-frames the IOP ring
-     * buffer can accept right now.  This replaces the old formula
-     *     nSamples = 4 * 800 - SjPCM_Buffered();
+     * buffer can accept RIGHT NOW.  This replaces the old formula
+     *     nRaw = 4 * 800 - SjPCM_Buffered();
      * which assumed the ring buffer held exactly 3200 frames.
      * audsrv uses a 20480-byte (5120-frame) ring, and
      * audsrv_queued() can report a non-zero initial occupancy
@@ -63,32 +70,27 @@ Int32 SJPCMMixBuffer::GetOutputSamples()
     nRaw &= ~3;
     if (nRaw < 0) nRaw = 0;
 
-    // determine number of samples needed for input
     switch (m_uSampleRate)
     {
-        case 48000:
-            // sample output is 1:1
-            nSamples = nRaw;
-            break;
-        case 32000:
-            // sample output is 2:3
-            // this must be divisible by 4 so that the output count is even
-            nSamples = (nRaw / 6) * 4;
-            break;
-        case 24000:
-            // sample output is 1:2
-            // this must be divisible by 4 so that the output count is even
-            nSamples = (nRaw / 8) * 4;
-            break;
-        default:
-            nSamples = 0;
+        case 48000: nSamples = nRaw;                break;
+        case 32000: nSamples = (nRaw / 6) * 4;      break;
+        case 24000: nSamples = (nRaw / 8) * 4;      break;
+        default:    nSamples = 0;                   break;
+    }
+
+    {
+        static int __gos = 0;
+        if ((__gos & 0x3F) == 0)
+            DLog("[snes-aud] gos f=%d sr=%u avail=%d out=%d async=%d",
+                 __gos, (unsigned)m_uSampleRate,
+                 (int)nRaw, (int)nSamples, (int)m_bAsync);
+        __gos++;
     }
 
     PROF_LEAVE("SjPCM_Available");
 
-	m_uLastOutput  = nSamples;
-
-	return nSamples;
+    m_uLastOutput  = nSamples;
+    return nSamples;
 }
 
 Int32 SJPCMMixBuffer::ConvertSamples2to3(Int16 *pOut, Int16 *pIn, Int32 nSamples, Int32 *pPrevSample)
@@ -164,6 +166,15 @@ void SJPCMMixBuffer::OutputSamplesStereo(Int16 *pLeftSamples, Int16 *pRightSampl
             break;
     }
 
+    {
+        static int __oss = 0;
+        if ((__oss & 0x3F) == 0)
+            DLog("[snes-aud] oss f=%d in=%d est=%d acc=%d max=%d",
+                 __oss, (int)nSamples, (int)nOutSamples,
+                 (int)m_nOutSamples, (int)SJPCMMIXBUFFER_MAXENQUEUE);
+        __oss++;
+    }
+
     // check for buffer overflow 
     if ((m_nOutSamples + nOutSamples) > SJPCMMIXBUFFER_MAXENQUEUE)
     {
@@ -196,6 +207,16 @@ void SJPCMMixBuffer::Flush()
     Int32 nOutSamples;
 
     nOutSamples = m_nOutSamples;
+
+    {
+        static int __fc = 0;
+        if ((__fc & 0x3F) == 0)
+        {
+            DLog("[snes-aud] flush f=%d nout=%d async=%d",
+                 __fc, (int)nOutSamples, (int)m_bAsync);
+        }
+        __fc++;
+    }
 
     if (nOutSamples > 0)
     {

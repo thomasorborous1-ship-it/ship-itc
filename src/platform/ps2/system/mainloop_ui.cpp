@@ -36,7 +36,7 @@ void MainLoopStatusPrintf(Int32 Time, const Char *pFormat, ...)
 	_MainLoop_StatusCount = Time;
 }
 
-void ScrPrintf(const Char *pFormat, ...)
+extern "C" void ScrPrintf(const Char *pFormat, ...)
 {
 	va_list argptr;
 	char str[256];

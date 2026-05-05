@@ -8,6 +8,7 @@
 #include <fileio.h>
 #include <iopheap.h>
 #include <iopcontrol.h>
+#include <sbv_patches.h>
 
 #include "types.h"
 #include "console.h"
@@ -124,6 +125,8 @@ int main(int argc, char **argv)
 
 	MainSetBootDir(_Main_pBootPath);
 
+	printf("[SNES-AUDFIX-V3] main: enter, bootpath=%s\n", _Main_pBootPath);
+
 	SifInitRpc(0);
 
 	if (_Main_pBootPath[0]=='m' && _Main_pBootPath[1]=='c')
@@ -133,6 +136,18 @@ int main(int argc, char **argv)
 		// reset if loaded from memory card
 		full_reset();
 	}
+
+	/* Patch the rom0:LOADFILE service so SifExecModuleBuffer (used by
+	   our embedded-IRX loader in src/platform/ps2/system/embedded_irx.cpp)
+	   actually works. The stock retail BIOS LOADFILE module is missing
+	   LoadModuleBuffer support, so without these patches the EE call
+	   "succeeds" but the IRX never finishes registering its RPC server -
+	   audsrv_init / SjPCM_Init / etc. then spin forever in SifBindRpc.
+	   This is the documented workaround in PS2SDK's sbv_patches.h. The
+	   prefix check patch additionally lets us load modules from any
+	   device, which is useful for cdrom: / host: fallbacks. */
+	sbv_patch_enable_lmb();
+	sbv_patch_disable_prefix_check();
 
 	/* Bind the EE-side fileio RPC client to the rom-resident FILEIO
 	   service. Without this, every fio* call (fioOpen, fioDopen,

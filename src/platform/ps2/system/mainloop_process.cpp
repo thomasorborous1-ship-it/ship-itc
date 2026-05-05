@@ -18,6 +18,7 @@
 #include "mainloop_input.h"
 #include "mainloop_state.h"
 #include "mainloop_exec.h"
+#include "mainloop_iop.h"
 
 #include "types.h"
 #include "console.h"
@@ -41,13 +42,36 @@ extern "C" {
 #include "sjpcm.h"
 };
 
+/* DLog is defined in sjpcm_rpc.c. It writes to the EE SIO TX FIFO so
+   each line lands in PCSX2/NetherSX2's emulator log alongside the IOP
+   loadmodule lines. We use it here to trace whether the SNES audio
+   path is even being entered every frame. */
+extern "C" void DLog(const char *fmt, ...);
+
 
 static Uint32 _iframetex=0;
 
 
 Bool MainLoopProcess()
 {
-    { static int __d=0; if(__d<10){ printf("[diag] f=%d menu=%d blk=%d scr=%p\n",__d,(int)_bMenu,(int)_MainLoop_BlackScreen,(void*)_MainLoop_pScreen); __d++; } }
+    /* Frame-level audio-path probe. Print the gate state every 60
+       frames (~1 s) so we can tell whether the SNES is actually
+       being executed (and therefore whether SJPCMMixBuffer::Flush /
+       SjPCM_Enqueue should be running). */
+    {
+        static int __frame = 0;
+        if ((__frame & 0x3F) == 0)
+        {
+            DLog("[snes-aud] proc f=%d menu=%d blk=%d sys=%p mix=%p ready=%d",
+                 __frame,
+                 (int)_bMenu,
+                 (int)_MainLoop_BlackScreen,
+                 (void*)_pSystem,
+                 (void*)_SJPCMMix,
+                 (int)_MainLoop_bSjPCMReady);
+        }
+        __frame++;
+    }
     NetPlayRPCInputT NetInput;
 
     PROF_ENTER("Frame");
@@ -200,6 +224,15 @@ Bool MainLoopProcess()
             } 
 #else
  			    GPPrimDisableZBuf();
+                {
+                    static int __ec = 0;
+                    if ((__ec & 0x3F) == 0)
+                    {
+                        DLog("[snes-aud] exec f=%d gs=%d mix=%p",
+                             __ec, (int)NetInput.eGameState, (void*)pMixBuffer);
+                    }
+                    __ec++;
+                }
                 _ExecuteSnes(pSurface, pMixBuffer, &Input, eMode);
 #endif
 		    _iframetex^=1;
