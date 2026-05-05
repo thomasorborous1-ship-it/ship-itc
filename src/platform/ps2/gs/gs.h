@@ -15,18 +15,36 @@
 //
 // GS Privileged registers.
 //
+// gsKit's gsInit.h defines these as pointer-typed macros
+// ((volatile u64 *)0x12000000), so guard ours behind #ifndef to
+// avoid a redefinition. After the gsKit migration these legacy
+// dereferenced forms are only used by the (off-by-default) DMA
+// debug helper in ps2dma.c.
+//
 
+#ifndef GS_PMODE
 #define GS_PMODE	*((volatile u64*)0x12000000)
+#endif
+#ifndef GS_SMODE2
 #define GS_SMODE2	*((volatile u64*)0x12000020)
+#endif
+#ifndef GS_DISPFB1
 #define GS_DISPFB1	*((volatile u64*)0x12000070)
+#endif
+#ifndef GS_DISPLAY1
 #define GS_DISPLAY1	*((volatile u64*)0x12000080)
+#endif
+#ifndef GS_BGCOLOUR
 #define GS_BGCOLOUR	*((volatile u64*)0x120000E0)
+#endif
 
 //
 // GIF registers
 //
 
+#ifndef GIF_CTRL
 #define GIF_CTRL	*((volatile u64*)0x12001000)
+#endif
 
 //
 // Misc macro's
