@@ -54,35 +54,18 @@ void GS_SetDispMode(int dx, int dy, int width, int height)
 {
 	 __asm__(" di ");
 
-	/* PMODE: bits 2-4 (CRTMD) MUST be 0b001 per the GS spec. The
-	   original iaddis value 0xFF61 had CRTMD=0 which works on real
-	   PS2 silicon (the hardware defaults CRTMD to 1 internally) but
-	   PCSX2 / NetherSX2 honour the spec strictly and treat CRTMD=0
-	   as "display disabled", giving a black screen even though all
-	   GIF DMA chains land correctly in VRAM.
+	/* PMODE: restore the original iaddis value.
+	   0xFF61 has CRTMD=0 which is technically non-conformant per the
+	   GS spec (should be 001), but real PS2 silicon defaults CRTMD
+	   to 1 internally and NetherSX2 (Patched) handles it correctly.
+	   The previous 0xFF65 + SMODE2=0x02 override caused vertical
+	   black stripes on NetherSX2 due to the emulator interpreting
+	   the forced frame-mode readout differently from real hardware.
 
+	   SMODE2 is left to the BIOS sceSetGSCrt default (no override).
 	   Layout: EN1<<0 | EN2<<1 | CRTMD<<2 | MMOD<<5 | AMOD<<6 |
-	           SLBG<<7 | ALP<<8.
-	   0xFF65 = EN1=1, EN2=0, CRTMD=001, MMOD=1, AMOD=1, SLBG=0,
-	           ALP=0xFF. */
-	GS_PMODE = 0xFF65;
-
-	/* SMODE2: explicitly set non-interlace + frame-mode reading.
-	   GS_InitGraph() above invokes the BIOS sceSetGSCrt syscall (id 2),
-	   which on real PS2 hardware leaves SMODE2.FFMD = 0 (field-mode
-	   readout) regardless of the interlace argument. Real silicon copes
-	   with non-interlace + field-mode, but PCSX2 / NetherSX2 follow the
-	   GS spec strictly and only scan out half of the framebuffer per
-	   refresh in that combination, alternating which half from frame to
-	   frame. The result on the emulator is a striped / shifted display
-	   even though the GIF DMA chains land in VRAM correctly (the SMW
-	   title screen letters look broken into vertical bars / dots).
-
-	   Override SMODE2 ourselves immediately after the BIOS call so the
-	   CRTC reads the whole framebuffer per refresh.
-	   Bit layout: INT<<0 | FFMD<<1 | DPMS<<2.
-	   0x02 = INT=0 (non-interlace), FFMD=1 (frame-mode), DPMS=0. */
-	GS_SMODE2 = 0x02;
+	           SLBG<<7 | ALP<<8. */
+	GS_PMODE = 0xFF61;
 
 	GS_DISPFB1 = GS_SET_DISPFB((0 / 0x2000), (width / 64), 0, 0, 0);
 	GS_DISPLAY1 =  (((u64)((height)-1)<<44) |
