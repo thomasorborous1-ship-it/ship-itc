@@ -5,12 +5,33 @@
 
 #include "snppublend.h"
 
-/*
- * Per-render-surface state for the gsKit-based blender. The legacy
- * SNPPUDmaListT struct that owned a 2KB pre-baked GIF chain plus four
- * patch pointers no longer exists - the chain is rebuilt in gsKit's
- * drawbuffer heap on every Exec() call.
- */
+struct SNPPUDmaListT
+{
+    /* Chain buffer, allocated once from gsKit's UCAB pool in the
+       SNPPUBlendGS constructor. Holds 128 quadwords of GIF tags,
+       DMA tags, and the per-scanline patch slots that the blender
+       rewrites every Exec(). UCAB is uncached + write-combined, so
+       the EE writes go straight to physical RAM and no FlushCache
+       is required before kicking the chain on the GIF channel. */
+    Uint128     *Data;
+
+    Uint64      *pFixedColor;
+    Uint64      *pAddSub;
+    Uint64      *pIntensity;
+    Uint64      *pXYOffset;
+
+    Uint32      uPalAddr;
+    Uint32      uInputAddr;
+    Uint32      uAttribMainPal;
+    Uint32      uAttribSubPal;
+    Uint32      uTempAddr;
+
+	Uint32		uOutAddr;
+};
+
+/* Number of quadwords the blender's UCAB chain buffer holds. */
+#define SNPPUBLEND_CHAIN_QWORDS 128
+
 struct SNPPUBlendColorCalibT
 {
 	Float32	y_mul,y_add;
@@ -22,17 +43,8 @@ struct SNPPUBlendColorCalibT
 
 class SNPPUBlendGS : public ISNPPUBlend
 {
-    /* VRAM TBP addresses (256-byte units). Set up once by the
-     * constructor and never modified afterwards - the chain reads
-     * them as immediate values. */
-    Uint32      m_uPalAddr;
-    Uint32      m_uInputAddr;
-    Uint32      m_uAttribMainPal;
-    Uint32      m_uAttribSubPal;
-    Uint32      m_uTempAddr;
-    Uint32      m_uOutAddr;
-
-    class CRenderSurface *m_pTarget;
+    SNPPUDmaListT m_DmaList _ALIGN(16);
+    SNPPUBlendInfoT *m_pDmaBlendInfo;
 
 public:
     SNPPUBlendGS(Uint32 uVramAddr, Uint32 uOutAddr);
