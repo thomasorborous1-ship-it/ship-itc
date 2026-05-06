@@ -7,13 +7,7 @@
 
 struct SNPPUDmaListT
 {
-    /* Chain buffer, allocated once from gsKit's UCAB pool in the
-       SNPPUBlendGS constructor. Holds 128 quadwords of GIF tags,
-       DMA tags, and the per-scanline patch slots that the blender
-       rewrites every Exec(). UCAB is uncached + write-combined, so
-       the EE writes go straight to physical RAM and no FlushCache
-       is required before kicking the chain on the GIF channel. */
-    Uint128     *Data;
+    Uint128     Data[128] _ALIGN(16);
 
     Uint64      *pFixedColor;
     Uint64      *pAddSub;
@@ -28,9 +22,6 @@ struct SNPPUDmaListT
 
 	Uint32		uOutAddr;
 };
-
-/* Number of quadwords the blender's UCAB chain buffer holds. */
-#define SNPPUBLEND_CHAIN_QWORDS 128
 
 struct SNPPUBlendColorCalibT
 {
