@@ -12,11 +12,25 @@ static char _Input_PadBuf[INPUT_MAXPADS][256]
     __attribute__((aligned(64)))
     __attribute__((section(".bss")));
 
+/* Each entry packs the four 8-bit analog axes reported by libpad in the
+   order (rjoy_h, rjoy_v, ljoy_h, ljoy_v) starting from the LSB so that
+   0x80808080 is centred. */
 static Uint32 _Input_PadData[INPUT_MAXPADS];
+static Uint32 _Input_PadAnalog[INPUT_MAXPADS];
 static int    _Input_bPadConnected[INPUT_MAXPADS];
 static Bool   _Input_bInitialized = FALSE;
 static Bool   _Input_bXPad = FALSE;
 static Int32  _Input_nPads = 0;
+
+/* Centred-stick value reported by libpad when the controller is digital
+   only or when the analog stick is at rest. */
+#define INPUT_ANALOG_CENTER  (0x80)
+
+/* Half range of motion that we ignore around the centre. ~37% of the full
+   half-range; matches the value used by InfinityStation/uLaunchELF style
+   menus and feels comfortable on real DualShock pads, while still being
+   loose enough that worn analog sticks register a deflection reliably. */
+#define INPUT_ANALOG_DEADZONE (0x30)
 
 static Uint8 _Input_PadPort[INPUT_MAXPADS][2] =
 {
@@ -64,7 +78,11 @@ static int _Input_InitPad(int port, int slot, void *buffer)
 
         _Input_WaitPadReady(port, slot);
         xpadExitPressMode(port, slot);
-        xpadSetMainMode(port, slot, PAD_MMODE_DIGITAL, PAD_MMODE_LOCK);
+        /* Lock the pad in DualShock mode so the analog sticks always
+           report deflection, regardless of the user pressing the ANALOG
+           button on the controller. Pads that don't support analog mode
+           silently keep behaving as digital. */
+        xpadSetMainMode(port, slot, PAD_MMODE_DUALSHOCK, PAD_MMODE_LOCK);
     }
     else
     {
@@ -76,7 +94,7 @@ static int _Input_InitPad(int port, int slot, void *buffer)
         }
 
         _Input_WaitPadReady(port, slot);
-        padSetMainMode(port, slot, PAD_MMODE_DIGITAL, PAD_MMODE_LOCK);
+        padSetMainMode(port, slot, PAD_MMODE_DUALSHOCK, PAD_MMODE_LOCK);
     }
 
     _Input_WaitPadReady(port, slot);
@@ -99,6 +117,35 @@ Uint32 InputGetPadData(Uint32 uPad)
     return _Input_PadData[uPad];
 }
 
+Uint32 InputGetPadDpadFromAnalog(Uint32 uPad)
+{
+    Uint32 packed;
+    int    ljoy_h;
+    int    ljoy_v;
+    Uint32 dpad = 0;
+
+    if (!InputIsPadConnected(uPad))
+        return 0;
+
+    packed = _Input_PadAnalog[uPad];
+    ljoy_h = (int)((packed >> 16) & 0xff);
+    ljoy_v = (int)((packed >> 24) & 0xff);
+
+    /* If the pad is reporting both axes exactly at centre, treat it as a
+       digital-only pad and skip the synthesis entirely. This avoids the
+       dead-zone test from accidentally emitting d-pad bits when the pad
+       has not negotiated DualShock mode. */
+    if (ljoy_h == INPUT_ANALOG_CENTER && ljoy_v == INPUT_ANALOG_CENTER)
+        return 0;
+
+    if (ljoy_h < (INPUT_ANALOG_CENTER - INPUT_ANALOG_DEADZONE)) dpad |= PAD_LEFT;
+    if (ljoy_h > (INPUT_ANALOG_CENTER + INPUT_ANALOG_DEADZONE)) dpad |= PAD_RIGHT;
+    if (ljoy_v < (INPUT_ANALOG_CENTER - INPUT_ANALOG_DEADZONE)) dpad |= PAD_UP;
+    if (ljoy_v > (INPUT_ANALOG_CENTER + INPUT_ANALOG_DEADZONE)) dpad |= PAD_DOWN;
+
+    return dpad;
+}
+
 void InputInit(Bool bXLib)
 {
     int iPad;
@@ -109,6 +156,10 @@ void InputInit(Bool bXLib)
     memset(_Input_PadData, 0, sizeof(_Input_PadData));
     memset(_Input_bPadConnected, 0, sizeof(_Input_bPadConnected));
     memset(_Input_PadBuf, 0, sizeof(_Input_PadBuf));
+    for (iPad = 0; iPad < INPUT_MAXPADS; iPad++)
+    {
+        _Input_PadAnalog[iPad] = 0x80808080U; /* both sticks centred */
+    }
 
     for (iPad = 0; iPad < _Input_nPads; iPad++)
     {
@@ -137,6 +188,10 @@ void InputShutdown(void)
 
     memset(_Input_PadData, 0, sizeof(_Input_PadData));
     memset(_Input_bPadConnected, 0, sizeof(_Input_bPadConnected));
+    for (iPad = 0; iPad < INPUT_MAXPADS; iPad++)
+    {
+        _Input_PadAnalog[iPad] = 0x80808080U;
+    }
 
     _Input_nPads = 0;
     _Input_bInitialized = FALSE;
@@ -175,6 +230,7 @@ void InputPoll(void)
 
             _Input_bPadConnected[iPad] = 0;
             _Input_PadData[iPad] = 0;
+            _Input_PadAnalog[iPad] = 0x80808080U;
             continue;
         }
 
@@ -191,13 +247,15 @@ void InputPoll(void)
         uData = 0;
 #endif
 
-#if 0
-        if (padStatus.ljoy_h < (0x80 - 0x30)) uData |= PAD_LEFT;
-        if (padStatus.ljoy_h > (0x80 + 0x30)) uData |= PAD_RIGHT;
-        if (padStatus.ljoy_v < (0x80 - 0x30)) uData |= PAD_UP;
-        if (padStatus.ljoy_v > (0x80 + 0x30)) uData |= PAD_DOWN;
-#endif
-
+        /* Keep _Input_PadData strictly digital so SNES/NES emulation
+           never sees synthesised d-pad bits from the analog stick. The
+           analog deflection is exposed separately via
+           InputGetPadDpadFromAnalog so the menu/UI layer can opt in. */
         _Input_PadData[iPad] = uData;
+        _Input_PadAnalog[iPad] =
+              ((Uint32)padStatus.ljoy_v << 24)
+            | ((Uint32)padStatus.ljoy_h << 16)
+            | ((Uint32)padStatus.rjoy_v << 8)
+            | ((Uint32)padStatus.rjoy_h);
     }
 }
