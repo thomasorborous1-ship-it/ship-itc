@@ -1,31 +1,4 @@
-/* snppublend_gs.cpp
- *
- * Per-line SNES PPU blender, GS->gsKit Fase 2 migration.
- *
- * The legacy implementation built a static GIF chain in EE memory once
- * per blend-info change and patched four pointers per scanline before
- * kicking the chain on the GIF DMA channel directly. After Fase 1
- * (gsKit owns the framebuffer) keeping that path alive required
- * draining gsKit's queue around every Begin/End pair and emitting a
- * manual TEXFLUSH afterwards.
- *
- * In Fase 2 the chain is allocated per-Exec from gsKit's drawbuffer
- * heap via gsKit_heap_alloc (for AD register blocks) and
- * gsKit_heap_alloc_dma (for image-mode DMA REF tags). Submission is
- * done through gsKit_queue_exec + gsKit_finish, sharing the GIF
- * channel ownership with the rest of the renderer. The static
- * SNPPUDmaListT.Data buffer and the four "patch pointers" disappear.
- *
- * VRAM layout (TBP units, 256 byte blocks) is unchanged from the
- * iaddis original so the SnesPPURender constructor still passes
- * (0x3C00, 0x2400):
- *   uPalAddr        = vram + 0x000
- *   uInputAddr      = vram + 0x080  (main8 line 0, sub8 line 1, attrib8 line 2)
- *   uAttribMainPal  = vram + 0x180
- *   uAttribSubPal   = vram + 0x184
- *   uTempAddr       = vram + 0x200
- *   uOutAddr        = caller-supplied (output texture)
- */
+
 
 #include <stdlib.h>
 #include "types.h"
@@ -40,46 +13,41 @@
 extern "C" {
 
 #include <kernel.h>
-#include <gsKit.h>
-#include <gsInline.h>
-#include <dmaKit.h>
-#include "gskit_backend.h"
+#include "ps2dma.h"
+#include "gpfifo.h"
 #include "gs.h"
+#include "gslist.h"
+#include "gskit_backend.h"
 #include "ps2mem.h"
-
 }
 
 #define SNPPUBLEND_PAL32 (TRUE)
 
 extern SnesChrLookupT _SnesPPU_PlaneLookup[2];
 
-/* Constant attribute-mask palettes. Only the first 8 entries (3-bit
- * attribute index into HSM) are ever sampled, but we upload them as
- * 16x16 PSMCT32 to match the legacy CSM1 layout, exactly like the
- * iaddis original did. */
 static Uint32 _SNPPUBlend_AttribMainPal[8] _ALIGN(16) =
-{                   /* HSM */
-    0x00000000,     /* 000 */
-    0x80000000,     /* 001 */
-    0x00000000,     /* 010 */
-    0x80000000,     /* 011 */
-    0x00000000,     /* 100 */
-    0x40000000,     /* 101 */
-    0x00000000,     /* 110 */
-    0x40000000,     /* 111 */
+{                   // HSM
+    0x00000000,     // 000
+    0x80000000,     // 001
+    0x00000000,     // 010
+    0x80000000,     // 011
+    0x00000000,     // 100
+    0x40000000,     // 101
+    0x00000000,     // 110
+    0x40000000,     // 111
 };
 
 
 static Uint32 _SNPPUBlend_AttribSubPal[8] _ALIGN(16) =
-{                   /* HSM */
-    0x00000000,     /* 000 */
-    0x00000000,     /* 001 */
-    0x80000000,     /* 010 */
-    0x80000000,     /* 011 */
-    0x00000000,     /* 100 */
-    0x00000000,     /* 101 */
-    0x40000000,     /* 110 */
-    0x40000000,     /* 111 */
+{                   // HSM
+    0x00000000,     // 000
+    0x00000000,     // 001
+    0x80000000,     // 010
+    0x80000000,     // 011
+    0x00000000,     // 100
+    0x00000000,     // 101
+    0x40000000,     // 110
+    0x40000000,     // 111
 };
 
 
@@ -125,7 +93,7 @@ void SNPPUBlendGS::UpdatePaletteEntry(SNPPUBlendInfoT *pInfo, Uint32 uAddr, Uint
 		uData |= 0x80000000;
 	} 
 
-	/* swap 8 and 0x10 of addr */
+	// swap 8 and 0x10 of addr
 	uAddr = (uAddr & ~0x18) | ((uAddr & 0x10) >> 1) | ((uAddr & 0x08) << 1);
 
 	pPal->Color32[uAddr] = uData;
@@ -145,7 +113,7 @@ void SNPPUBlendGS::UpdatePalette(SNPPUBlendInfoT *pInfo, Uint16 *pCGRam, Uint32 
 
 		uAddr = (uAddr & ~0x18) | ((uAddr & 0x10) >> 1) | ((uAddr & 0x08) << 1);
 
-		/* set palette entry (with alpha set) */
+		// set palette entry (with alpha set)
 		pPal->Color32[uAddr] = SNPPUColorConvert15to32(pCGRam[iEntry]) | 0x80000000;
 	}
 
@@ -163,7 +131,7 @@ static Uint32 SNPPUColorConvert15to32(SnesColor16T uColor16)
 	uG = ((uColor16 >>  5) & 0x1F);
 	uB = ((uColor16 >>  10) & 0x1F);
 
-	/* convert snes16->generic32 */
+	// convert snes16->generic32
 	uColor32 =  uR <<  (0  + 3);
 	uColor32|=  uG <<  (8  + 3);
 	uColor32|=  uB <<  (16 + 3);
@@ -192,7 +160,7 @@ void SNPPUBlendGS::UpdatePalette(SNPPUBlendInfoT *pInfo, Uint16 *pCGRam, Uint32 
 	pPal->Color16[0] = pCGRam[0];
 	for (iEntry=1; iEntry < 256; iEntry++)
 	{
-		/* set palette entry (with alpha set) */
+		// set palette entry (with alpha set)
 		pPal->Color16[iEntry] = pCGRam[iEntry] | 0x8000;
 	}
 
@@ -204,413 +172,458 @@ void SNPPUBlendGS::UpdatePalette(SNPPUBlendInfoT *pInfo, Uint16 *pCGRam, Uint32 
 #endif
 
 
-/* ----------------------------------------------------------------- */
-/* gsKit chain helpers                                                */
-/* ----------------------------------------------------------------- */
-
-/* Allocate one A+D GIF block in gsKit's drawbuffer heap. Returns a
- * pointer past the GIFTAG that the caller should fill with `nregs`
- * (data, register) pairs. Using GIF_AD as the type guarantees a fresh
- * GIFTAG every call - we don't want gsKit's auto-merge here, the
- * legacy chain wrote each register block as its own tag and the GS
- * pipeline depends on that ordering. */
-static u64 *_alloc_ad(GSGLOBAL *gs, int nregs)
+static void _GPFifoUploadTexture(int TBP, int TBW, int xofs, int yofs, int pxlfmt, void *tex, int wpxls, int hpxls)
 {
-    u64 *p = (u64 *)gsKit_heap_alloc(gs, nregs, nregs * 16, GIF_AD);
-    *p++ = GIF_TAG_AD(nregs);
-    *p++ = GIF_AD;
-    return p;
-}
+    int numq;
 
-/* Number of qwords occupied by an image of `w` x `h` pixels in `psm`. */
-static int _image_qwords(int psm, int w, int h)
-{
-    int n = w * h;
-    switch (psm)
+    numq = wpxls * hpxls;
+    switch (pxlfmt)
     {
-    case GS_PSMCT32: return (n + 3) >> 2;   /* 4 px / qword  */
-    case GS_PSMCT16: return (n + 7) >> 3;   /* 8 px / qword  */
-    case GS_PSMT8:   return (n + 15) >> 4;  /* 16 px / qword */
-    case GS_PSMT4:   return (n + 31) >> 5;  /* 32 px / qword */
-    }
-    return 0;
-}
-
-/* Emit a HOST->LOCAL texture upload via the gsKit heap. Mirrors the
- * legacy _GPFifoUploadTexture: BITBLTBUF / TRXPOS / TRXREG / TRXDIR
- * setup as an A+D block, then an image GIFTAG followed by a DMA REF
- * pointing at the source data in EE memory.
- *
- *   tbp_units   : destination VRAM TBP, in 256-byte units
- *   tbw_pixels  : destination buffer width in pixels (must be multiple of 64)
- *   xofs/yofs   : destination offset in pixels
- *   psm         : destination pixel format (GS_PSMCT32 / PSMCT16 / PSMT8)
- *   src_uncached: pointer into EE memory, already OR'd with 0x80000000
- *   width/height: transfer size in pixels
- */
-static void _emit_upload(GSGLOBAL *gs,
-                         Uint32 tbp_units, Uint32 tbw_pixels,
-                         int xofs, int yofs,
-                         int psm,
-                         void *src_uncached,
-                         int width, int height)
-{
-    u64 *p = _alloc_ad(gs, 4);
-    *p++ = GS_SETREG_BITBLTBUF(0, 0, 0, tbp_units, tbw_pixels / 64, psm);
-    *p++ = GS_BITBLTBUF;
-    *p++ = GS_SETREG_TRXPOS(0, 0, xofs, yofs, 0);
-    *p++ = GS_TRXPOS;
-    *p++ = GS_SETREG_TRXREG(width, height);
-    *p++ = GS_TRXREG;
-    *p++ = GS_SETREG_TRXDIR(0);
-    *p++ = GS_TRXDIR;
-
-    int qwc     = _image_qwords(psm, width, height);
-    int packets = qwc / GS_GIF_BLOCKSIZE;
-    int remain  = qwc % GS_GIF_BLOCKSIZE;
-    int dmasize = (packets * 3) + (remain ? 3 : 0);
-    if (dmasize == 0)
-    {
-        return;
+    case 0x00: numq = (numq >> 2) + ((numq & 0x03) != 0 ? 1 : 0); break;
+    case 0x02: numq = (numq >> 3) + ((numq & 0x07) != 0 ? 1 : 0); break;
+    case 0x13: numq = (numq >> 4) + ((numq & 0x0f) != 0 ? 1 : 0); break;
+    case 0x14: numq = (numq >> 5) + ((numq & 0x1f) != 0 ? 1 : 0); break;
+    default:   numq = 0;
     }
 
-    u64 *dp = (u64 *)gsKit_heap_alloc_dma(gs, dmasize, dmasize * 16);
-    u32 src_addr = (u32)src_uncached;
+    GSGifTagOpenAD();
 
-    int i;
-    for (i = 0; i < packets; i++)
-    {
-        *dp++ = DMA_TAG(1, 0, DMA_CNT, 0, 0, 0);
-        *dp++ = 0;
-        *dp++ = GIF_TAG(GS_GIF_BLOCKSIZE, 0, 0, 0, GSKIT_GIF_FLG_IMAGE, 0);
-        *dp++ = 0;
-        *dp++ = DMA_TAG(GS_GIF_BLOCKSIZE, 0, DMA_REF, 0, src_addr, 0);
-        *dp++ = 0;
-        src_addr += GS_GIF_BLOCKSIZE * 16;
-    }
-    if (remain > 0)
-    {
-        *dp++ = DMA_TAG(1, 0, DMA_CNT, 0, 0, 0);
-        *dp++ = 0;
-        *dp++ = GIF_TAG(remain, 0, 0, 0, GSKIT_GIF_FLG_IMAGE, 0);
-        *dp++ = 0;
-        *dp++ = DMA_TAG(remain, 0, DMA_REF, 0, src_addr, 0);
-        *dp++ = 0;
-    }
+    GSGifRegAD(GS_REG_BITBLTBUF,GS_SET_BITBLTBUF( 0, (TBW/64), pxlfmt,  (TBP/256), (TBW/64), pxlfmt));
+    GSGifRegAD(GS_REG_TRXPOS,GS_SET_TRXPOS(0,0,xofs,yofs,0));
+    GSGifRegAD(GS_REG_TRXREG,GS_SET_TRXREG(wpxls, hpxls));
+    GSGifRegAD(GS_REG_TRXDIR,GS_SET_TRXDIR(0));
+    
+    GSGifTagCloseAD();
+    
+    // image gif tag
+    GSGifTagImage(numq);
+
+    // close last dma cnt
+    GSDmaCntClose();
+
+    // dma image data
+    GSDmaRef((Uint128 *)tex, numq);
+
+
+    // start new dma cnt
+    GSDmaCntOpen();
 }
 
-/* Emit a 256-pixel-wide textured sprite covering one scanline. The
- * caller is responsible for setting TEX0 / ALPHA before this call.
- * `iDestLine` is the destination Y, `iSrcLine` is the source V. The
- * 0x8000 offsets recreate the legacy "pixel-perfect" XYOFFSET
- * convention so that the same XYOFFSET base value used for every
- * line works correctly. */
-static void _emit_tex_line(GSGLOBAL *gs, int iDestLine, int iSrcLine,
-                           Uint32 RGBA, int abe)
+
+static void _SNPPURenderTexLine(Int32 iDestLine, Int32 iSrcLine, Uint32 RGBA, int abe)
 {
-    int x1 = (  0 << 4) + 0x8000;
-    int y1 = (iDestLine       << 4) + 0x8000;
-    int x2 = (256 << 4) + 0x8000;
-    int y2 = ((iDestLine + 1) << 4) + 0x8000;
+    int x1,x2,y1,y2;
+    int u1,u2,v1,v2;
 
-    int u1 =   0           << 4;
-    int v1 = (iSrcLine     ) << 4;
-    int u2 = 256           << 4;
-    int v2 = (iSrcLine + 1) << 4;
+    x1  =   0 << 4;
+    x2  = 256 << 4;
+    y1  = (iDestLine + 0) << 4;
+    y2  = (iDestLine + 1) << 4;
 
-    u64 *p = _alloc_ad(gs, 6);
-    *p++ = GS_SETREG_PRIM(0x06, 0, 1, 0, abe, 0, 1, 0, 0);  *p++ = GS_PRIM;
-    *p++ = (u64)RGBA;                                       *p++ = GS_RGBAQ;
-    *p++ = GS_SETREG_UV(u1, v1);                            *p++ = GS_UV;
-    *p++ = GS_SETREG_XYZ(x1, y1, 0);                        *p++ = GS_XYZ2;
-    *p++ = GS_SETREG_UV(u2, v2);                            *p++ = GS_UV;
-    *p++ = GS_SETREG_XYZ(x2, y2, 0);                        *p++ = GS_XYZ2;
+    u1  =   0 << 4;
+    u2  = 256 << 4;
+    v1  = (iSrcLine + 0) << 4;
+    v2  = (iSrcLine + 1) << 4;
+
+    x1+=0x8000;
+    y1+=0x8000;
+    x2+=0x8000;
+    y2+=0x8000;
+    
+    GSGifTagOpen(GIF_SET_TAG(1, 1, 0, 0, 1, 6), 0xF535310);
+    
+	GSGifReg(GS_SET_PRIM(0x06, 0, 1, 0, abe, 0, 1, 0, 0));
+	GSGifReg(RGBA);
+	GSGifReg(GS_SET_UV(u1, v1));
+	GSGifReg(GS_SET_XYZ(x1,y1,0));
+	GSGifReg(GS_SET_UV(u2, v2));
+	GSGifReg(GS_SET_XYZ(x2,y2,0));
+    
+    GSGifTagClose();
+
 }
 
-/* Emit a 256-pixel-wide untextured sprite covering one scanline. The
- * caller is responsible for setting RGBAQ / ALPHA before calling. */
-static void _emit_solid_line(GSGLOBAL *gs, int iDestLine, int abe)
+
+static void _SNPPURenderLine(Int32 iDestLine, int abe)
 {
-    int x1 = (  0 << 4) + 0x8000;
-    int y1 = (iDestLine       << 4) + 0x8000;
-    int x2 = (256 << 4) + 0x8000;
-    int y2 = ((iDestLine + 1) << 4) + 0x8000;
+    int x1,x2,y1,y2;
 
-    u64 *p = _alloc_ad(gs, 3);
-    *p++ = GS_SETREG_PRIM(0x06, 0, 0, 0, abe, 0, 1, 0, 0);  *p++ = GS_PRIM;
-    *p++ = GS_SETREG_XYZ(x1, y1, 0);                        *p++ = GS_XYZ2;
-    *p++ = GS_SETREG_XYZ(x2, y2, 0);                        *p++ = GS_XYZ2;
+    x1  =   0 << 4;
+    x2  = 256 << 4;
+    y1  = (iDestLine + 0) << 4;
+    y2  = (iDestLine + 1) << 4;
+
+    x1+=0x8000;
+    x2+=0x8000;
+    y1+=0x8000;
+    y2+=0x8000;
+  
+    GSGifTagOpen(GIF_SET_TAG(1, 1, 0, 0, 1, 4), 0xF550);
+    
+	GSGifReg(GS_SET_PRIM(0x06, 0, 0, 0, abe, 0, 1, 0, 0));
+	GSGifReg(GS_SET_XYZ(x1,y1,0));
+	GSGifReg(GS_SET_XYZ(x2,y2,0));
+	GSGifReg(0);
+    
+    GSGifTagClose();
 }
+  
 
-
-/* ----------------------------------------------------------------- */
-/* Lifecycle: ctor / Begin / End                                      */
-/* ----------------------------------------------------------------- */
-
-SNPPUBlendGS::SNPPUBlendGS(Uint32 uVramAddr, Uint32 uOutAddr)
-{
-    m_uPalAddr        = uVramAddr + 0x000;
-    m_uInputAddr      = uVramAddr + 0x080;
-    m_uAttribMainPal  = uVramAddr + 0x180;
-    m_uAttribSubPal   = uVramAddr + 0x184;
-    m_uTempAddr       = uVramAddr + 0x200;
-    m_uOutAddr        = uOutAddr;
-    m_pTarget         = NULL;
-}
 
 void SNPPUBlendGS::Begin(CRenderSurface *pTarget)
 {
     m_pTarget = pTarget;
-    if (!m_pTarget)
-    {
-        return;
-    }
+	if (!m_pTarget)
+	{
+		return;
+	}
 
-    GSGLOBAL *gs = GSK_GetGlobal();
-    if (!gs)
-    {
-        return;
-    }
+    // these are constants!
+    _GPFifoUploadTexture(
+         m_DmaList.uAttribMainPal * 0x100, 
+         64, 0, 0, 
+         GS_PSMCT32, 
+         _SNPPUBlend_AttribMainPal, 
+         16, 
+         16);
 
-    /* Drain anything the UI / mainloop may have queued before us so we
-     * have a clean drawbuffer heap to build the per-line chain from. */
-    GSK_DrainAndWait();
+    _GPFifoUploadTexture(
+         m_DmaList.uAttribSubPal * 0x100, 
+         64, 0, 0, 
+         GS_PSMCT32, 
+         _SNPPUBlend_AttribSubPal, 
+         16, 
+         16);
 
-    /* Upload the constant attribute-mask palettes once per render
-     * surface. The legacy code uploads them as 16x16 PSMCT32 even
-     * though only 8 entries are actually sampled by attrib8 - keep
-     * that exact layout so the CSM1 cache reads land at the same
-     * VRAM offsets. */
-    _emit_upload(gs, m_uAttribMainPal, 64, 0, 0, GS_PSMCT32,
-                 (void *)((Uint32)_SNPPUBlend_AttribMainPal | 0x80000000),
-                 16, 16);
 
-    _emit_upload(gs, m_uAttribSubPal, 64, 0, 0, GS_PSMCT32,
-                 (void *)((Uint32)_SNPPUBlend_AttribSubPal | 0x80000000),
-                 16, 16);
+    GSGifTagOpenAD();
 
-    /* Per-surface render state: TEXCLUT for CSM1, TEXA opaque, no
-     * clamp, default TEX1. These only need to be set once before the
-     * blender loop runs. */
-    {
-        u64 *p = _alloc_ad(gs, 4);
-        *p++ = (u64)(256 / 64);                          *p++ = GS_TEXCLUT;
-        *p++ = GS_SETREG_TEXA(0x00, 0, 0x80);            *p++ = GS_TEXA;
-        *p++ = GS_SETREG_CLAMP(0, 0, 0, 0, 0, 0);        *p++ = GS_CLAMP_1;
-        *p++ = (u64)0x000;                               *p++ = GS_TEX1_1;
-    }
+	GSGifRegAD(GS_REG_TEXCLUT,256/64);
 
-    gsKit_queue_exec(gs);
-    gsKit_finish();
+	GSGifRegAD(GS_REG_TEXA,GS_SET_TEXA(0x00,0,0x80));
+
+    // clamp_1
+	GSGifRegAD(GS_REG_CLAMP_1,GS_SET_CLAMP(0, 0, 0, 0, 0, 0));
+
+    // tex1_1
+    GSGifRegAD(GS_REG_TEX1_1, 0x000);
+
+    GSGifTagCloseAD();
+
+
+    GPFifoPause();
 }
 
 void SNPPUBlendGS::End()
 {
-    if (!m_pTarget)
-    {
-        return;
-    }
+	if (!m_pTarget)
+	{
+		return;
+	}
 
-    GSGLOBAL *gs = GSK_GetGlobal();
-    if (!gs)
-    {
-        m_pTarget = NULL;
-        return;
-    }
+    // wait for previous dma to finish
+    DmaSyncGIF();
 
-    /* Restore FRAME_1 / XYOFFSET_1 to whatever gsKit currently has
-     * configured for its UI rendering. The blender shifted both
-     * during the per-line passes. */
-    {
-        u64 *p = _alloc_ad(gs, 2);
-        *p++ = GS_GetFrameReg();    *p++ = GS_FRAME_1;
-        *p++ = GS_GetOffsetReg();   *p++ = GS_XYOFFSET_1;
-    }
+    GPFifoResume();
 
-    gsKit_queue_exec(gs);
-    gsKit_finish();
+    GSGifTagOpenAD();
+    // reset frame register
+	GSGifRegAD(GS_REG_FRAME_1, GS_GetFrameReg());
+	GSGifRegAD(GS_REG_XYOFFSET_1, GS_GetOffsetReg());
+    GSGifTagCloseAD();
 
     m_pTarget = NULL;
 }
 
 
-/* ----------------------------------------------------------------- */
-/* Per-line chain build & submit                                      */
-/* ----------------------------------------------------------------- */
 
-void SNPPUBlendGS::Exec(SNPPUBlendInfoT *pInfo, Int32 iLine, Uint32 uFixedColor16,
-                       SNMaskT *pColorMask, Bool bAddSub, Uint32 uIntensity)
+
+static void _SNPPUBlendBuildList(SNPPUDmaListT *pList, SNPPUBlendInfoT *pInfo, Uint32 uOutAddr)
 {
-    if (!m_pTarget)
-    {
-        return;
-    }
+    PaletteT *pPal = pInfo->Pal;
 
-    GSGLOBAL *gs = GSK_GetGlobal();
-    if (!gs)
+    // begin dma list (Data is a UCAB pointer so writes bypass cache)
+    GSListBegin(pList->Data, SNPPUBLEND_CHAIN_QWORDS, NULL);
+
+    GSDmaCntOpen();
+
+	#if SNPPUBLEND_PAL32
+	// upload as 16x16 psmct32 for use as csm1
+    _GPFifoUploadTexture(
+         pList->uPalAddr * 0x100, 
+         1, 0, 0, 
+         GS_PSMCT32, 
+         (void *)(((Uint32)pPal) | 0x80000000), 
+         16, 
+         16);
+	#else
+	// upload as 256x1 psmct16 for use as csm2
+    _GPFifoUploadTexture(
+         pList->uPalAddr * 0x100, 
+         256, 0, 0, 
+         GS_PSMCT16, 
+         (void *)(((Uint32)pPal) | 0x80000000), 
+         256, 
+         1);
+	#endif
+
+
+    _GPFifoUploadTexture(
+         pList->uInputAddr * 0x100, 
+         256, 0, 0, 
+         GS_PSMT8, 
+         (void *)(((Uint32)pInfo->uMain8) | 0x80000000), 
+         256, 
+         1);
+
+    _GPFifoUploadTexture(
+         pList->uInputAddr * 0x100, 
+         256, 0, 1, 
+         GS_PSMT8, 
+         (void *)(((Uint32)pInfo->uSub8) | 0x80000000), 
+         256, 
+         1);
+
+    _GPFifoUploadTexture(
+         pList->uInputAddr * 0x100, 
+         256, 0, 2, 
+         GS_PSMT8, 
+         (void *)(((Uint32)pInfo->uAttrib8) | 0x80000000), 
+         256, 
+         1);
+
+
+
+    GSGifTagOpenAD();
+
+    // texflush
+    GSGifRegAD(GS_REG_TEXFLUSH,0);
+
+    // setup frame register to point to our temporary texture
+	GSGifRegAD(GS_REG_FRAME_1, GS_SET_FRAME((pList->uTempAddr/0x20),256/64,GS_PSMCT32,0 ));
+
+	GSGifRegAD(GS_REG_XYOFFSET_1, GS_SET_XYOFFSET(0x8000, 0x8000));
+
+    GSGifTagCloseAD();
+
+
+    // setup src texture
+
+    GSGifTagOpenAD();
+	#if SNPPUBLEND_PAL32
+	// use clut psmct32 csm1
+	GSGifRegAD(GS_REG_TEX0_1,GS_SET_TEX0(pList->uInputAddr, 256/64, GS_PSMT8, 8, 3,    1, 0, pList->uPalAddr, GS_PSMCT32, 0, 0, 1));
+	#else
+	// use clut psmct16 csm2
+	GSGifRegAD(GS_REG_TEX0_1,GS_SET_TEX0(pList->uInputAddr, 256/64, GS_PSMT8, 8, 3,    1, 0, pList->uPalAddr, GS_PSMCT16, 1, 0, 1));
+	#endif
+    GSGifRegAD(GS_REG_ALPHA_1,GS_SET_ALPHA(0,1,0,1, 0x80));
+
+    pList->pFixedColor = (Uint64 *)GSListGetUncachedPtr();
+    GSGifRegAD(GS_REG_RGBAQ, 0);
+    GSGifTagCloseAD();
+
+    // render fixed color32 -> temp32[1]
+    _SNPPURenderLine(1, 0);
+
+    // render main8 -> temp32[0]
+    _SNPPURenderTexLine(0, 0, 0x80808080, 0);
+
+    // render sub8 -> temp32[1] (alpha=0 means use fixed color)
+    _SNPPURenderTexLine(1, 1, 0x80808080, 1);
+
+
+    //
+    // render attribs
+    //
+
+
+
+    GSGifTagOpenAD();
+
+	// tex0_1
+	GSGifRegAD(GS_REG_TEX0_1,GS_SET_TEX0(pList->uInputAddr, 256/64, GS_PSMT8, 8, 3,    1, 0, pList->uAttribMainPal, GS_PSMCT32, 0, 0, 1));
+
+
+    // alpha_1: A = Cs, B = Cd, C = As, D = Cd
+    // (a - b) * c + d
+    GSGifRegAD(GS_REG_ALPHA_1,GS_SET_ALPHA(1,2,0,2, 0x20));
+    
+    GSGifTagCloseAD();
+
+    // render attrib main8 -> temp32 line 0
+    _SNPPURenderTexLine(0, 2, 0x80808080, 1);
+
+       
+
+    GSGifTagOpenAD();
+
+	// tex0_1
+	GSGifRegAD(GS_REG_TEX0_1,GS_SET_TEX0(pList->uInputAddr, 256/64, GS_PSMT8, 8, 3,    1, 0, pList->uAttribSubPal, GS_PSMCT32, 0, 0, 1));
+
+
+    // alpha_1: A = Cs, B = Cd, C = As, D = Cd
+    // (a - b) * c + d
+    GSGifRegAD(GS_REG_ALPHA_1,GS_SET_ALPHA(1,2,0,2, 0x80));
+    
+    GSGifTagCloseAD();
+
+
+    // render attrib sub8 -> temp32 line 0
+    _SNPPURenderTexLine(1, 2, 0x80808080, 1);
+
+
+    // texflush
+    GSGifTagOpenAD();
+    GSGifRegAD(GS_REG_TEXFLUSH,0);
+
+    // setup frame register to point to our output texture
+	GSGifRegAD(GS_REG_FRAME_1, GS_SET_FRAME((uOutAddr/0x20),256/64,GS_PSMCT32,0 ));
+
+	// tex0_1
+	GSGifRegAD(GS_REG_TEX0_1,GS_SET_TEX0(pList->uTempAddr, 256/64, GS_PSMCT32, 8, 3,    1, 0, 0, 0, 0, 0, 0));
+
+    // alpha_1: A = Cs, B = Cd, C = As, D = Cd
+    // (a - b) * c + d
+    pList->pAddSub = (Uint64 *)GSListGetUncachedPtr();
+    GSGifRegAD(GS_REG_ALPHA_1,GS_SET_ALPHA(0,2,2,1, 0x80));
+
+    pList->pXYOffset = (Uint64 *)GSListGetUncachedPtr();
+	GSGifRegAD(GS_REG_XYOFFSET_1, 0);
+    
+    GSGifTagCloseAD();
+
+    // render out32 = main32 * attrib
+    _SNPPURenderTexLine(0, 0, 0x80808080, 0);
+
+    // render out32 += sub32 * attrib
+    _SNPPURenderTexLine(0, 1, 0x80808080, 1);
+
+    GSGifTagOpenAD();
+    GSGifRegAD(GS_REG_ALPHA_1,GS_SET_ALPHA(1,2,0,2, 0x80 ));
+    pList->pIntensity = (Uint64 *)GSListGetUncachedPtr();
+    GSGifRegAD(GS_REG_RGBAQ, 0);
+    GSGifTagCloseAD();
+
+    // render out32 *= intensity
+    _SNPPURenderLine(0, 1);
+
+    // close current dma cnt
+    GSDmaCntClose();
+    
+    // add end tag
+    GSDmaEnd();
+
+    GSListEnd();
+}
+
+
+
+
+
+
+#if 1
+
+
+static void _SNPPUBlendSetParm(SNPPUDmaListT *pList, Int32 iLine, Uint32 uFixedColor16, Bool bAddSub, Uint32 uIntensity)
+{
+    *pList->pFixedColor = SNPPUColorConvert15to32(uFixedColor16);
+    *pList->pXYOffset   = GS_SET_XYOFFSET(0x8000, 0x8000 - (iLine<<4)  );
+    *pList->pIntensity  = (uIntensity * 0x80 / 15) << 24;
+    if (!bAddSub)
     {
-        return;
+        // add
+        *pList->pAddSub     = GS_SET_ALPHA(1,2,2,0, 0x80);
+    } else
+    {
+        // sub
+        *pList->pAddSub     = GS_SET_ALPHA(1,0,2,2, 0x80);
+    }
+    __asm__ __volatile__ ("sync.l");
+}
+
+
+
+#include "gs.h"
+
+SNPPUBlendGS::SNPPUBlendGS(Uint32 uVramAddr, Uint32 uOutAddr)
+{
+    SNPPUDmaListT *pList = &m_DmaList;
+
+    m_pDmaBlendInfo = NULL;
+
+    /* Chain buffer lives in gsKit's UCAB pool (uncached + write
+       combined). 128 quadwords = 2 KB is enough for the full per
+       scanline blender chain that _SNPPUBlendBuildList builds. */
+    pList->Data = (Uint128 *)GSK_AllocUcab(
+        SNPPUBLEND_CHAIN_QWORDS * sizeof(Uint128));
+
+    pList->uPalAddr        = uVramAddr + 0x000;
+    pList->uInputAddr      = uVramAddr + 0x080 ;
+    pList->uAttribMainPal  = uVramAddr + 0x180 ;
+    pList->uAttribSubPal   = uVramAddr + 0x184 ;
+    pList->uTempAddr       = uVramAddr + 0x200 ;
+
+	pList->uOutAddr = uOutAddr;
+}
+
+void SNPPUBlendGS::Exec(SNPPUBlendInfoT *pInfo, Int32 iLine, Uint32 uFixedColor32, SNMaskT *pColorMask, Bool bAddSub, Uint32 uIntensity)
+{
+	if (!m_pTarget)
+	{
+		return;
+	}
+
+    if (m_pDmaBlendInfo != pInfo)
+    {
+        // build dma list for this blend info. The chain lives in
+        // UCAB memory so writes bypass the data cache; no
+        // FlushCache(0) is required before the DMA reads it.
+        _SNPPUBlendBuildList(&m_DmaList, pInfo, m_DmaList.uOutAddr);
+
+        m_pDmaBlendInfo = pInfo;
     }
 
     if (pColorMask)
     {
         PROF_ENTER("SNPPUBlendPlanarTo3");
-        _PlanarTo3(pInfo->uAttrib8, &pColorMask[0], &pColorMask[1], &pColorMask[2]);
+        _PlanarTo3(pInfo->uAttrib8, &pColorMask[0],&pColorMask[1],&pColorMask[2]);
         PROF_LEAVE("SNPPUBlendPlanarTo3");
     }
 
+    // wait for previous dma to finish
+    PROF_ENTER("SNPPUGS");
+    DmaSyncGIF();
+    PROF_LEAVE("SNPPUGS");
+
     PROF_ENTER("SNPPUBlendExec");
 
-    PaletteT *pPal = pInfo->Pal;
-
-    /*
-     * 1. Re-upload palette + main8 + sub8 + attrib8 for this line.
-     *    The DMA REF points straight at pInfo's EE memory (uncached
-     *    alias) so the GIF reads the latest scanline content.
-     */
-#if SNPPUBLEND_PAL32
-    /* CSM1: 16x16 PSMCT32 contiguous CLUT cache. */
-    _emit_upload(gs, m_uPalAddr, 1, 0, 0, GS_PSMCT32,
-                 (void *)((Uint32)pPal | 0x80000000),
-                 16, 16);
-#else
-    /* CSM2: 256x1 PSMCT16 stripe. */
-    _emit_upload(gs, m_uPalAddr, 256, 0, 0, GS_PSMCT16,
-                 (void *)((Uint32)pPal | 0x80000000),
-                 256, 1);
-#endif
-
-    _emit_upload(gs, m_uInputAddr, 256, 0, 0, GS_PSMT8,
-                 (void *)((Uint32)pInfo->uMain8 | 0x80000000),
-                 256, 1);
-
-    _emit_upload(gs, m_uInputAddr, 256, 0, 1, GS_PSMT8,
-                 (void *)((Uint32)pInfo->uSub8 | 0x80000000),
-                 256, 1);
-
-    _emit_upload(gs, m_uInputAddr, 256, 0, 2, GS_PSMT8,
-                 (void *)((Uint32)pInfo->uAttrib8 | 0x80000000),
-                 256, 1);
-
-    /*
-     * 2. Switch the destination to the temporary 256x32 PSMCT32
-     *    surface used as scratch for the colour-math passes.
-     */
-    {
-        u64 *p = _alloc_ad(gs, 3);
-        *p++ = (u64)0;                                                                *p++ = GS_TEXFLUSH;
-        *p++ = GS_SETREG_FRAME(m_uTempAddr / 0x20, 256 / 64, GS_PSMCT32, 0);          *p++ = GS_FRAME_1;
-        *p++ = GS_SETREG_XYOFFSET(0x8000, 0x8000);                                    *p++ = GS_XYOFFSET_1;
-    }
-
-    /*
-     * 3. Bind input plane via palette, set blend (Cs * Cs.A + 0) and
-     *    push the fixed-colour sprite into temp[1] - sub8 entries
-     *    with alpha=0 will pick this colour up.
-     */
-    Uint32 uFixedColor32 = SNPPUColorConvert15to32(uFixedColor16);
-    {
-        u64 *p = _alloc_ad(gs, 3);
-#if SNPPUBLEND_PAL32
-        *p++ = GS_SETREG_TEX0(m_uInputAddr, 256 / 64, GS_PSMT8, 8, 3,
-                              1, 0, m_uPalAddr, GS_PSMCT32, 0, 0, 1);                 *p++ = GS_TEX0_1;
-#else
-        *p++ = GS_SETREG_TEX0(m_uInputAddr, 256 / 64, GS_PSMT8, 8, 3,
-                              1, 0, m_uPalAddr, GS_PSMCT16, 1, 0, 1);                 *p++ = GS_TEX0_1;
-#endif
-        *p++ = GS_SETREG_ALPHA(0, 1, 0, 1, 0x80);                                     *p++ = GS_ALPHA_1;
-        *p++ = (u64)uFixedColor32;                                                    *p++ = GS_RGBAQ;
-    }
-
-    /* fixed colour -> temp[1] */
-    _emit_solid_line(gs, 1, 0);
-    /* main8 (palettised) -> temp[0] */
-    _emit_tex_line(gs, 0, 0, 0x80808080, 0);
-    /* sub8 (palettised), entries with alpha=0 fall through to fixed -> temp[1] */
-    _emit_tex_line(gs, 1, 1, 0x80808080, 1);
-
-    /*
-     * 4. Mask temp lines through the attribute palettes so that
-     *    pixels with the wrong colour-math attribute get zeroed out.
-     */
-    {
-        u64 *p = _alloc_ad(gs, 2);
-        *p++ = GS_SETREG_TEX0(m_uInputAddr, 256 / 64, GS_PSMT8, 8, 3,
-                              1, 0, m_uAttribMainPal, GS_PSMCT32, 0, 0, 1);           *p++ = GS_TEX0_1;
-        *p++ = GS_SETREG_ALPHA(1, 2, 0, 2, 0x20);                                     *p++ = GS_ALPHA_1;
-    }
-    _emit_tex_line(gs, 0, 2, 0x80808080, 1);
-
-    {
-        u64 *p = _alloc_ad(gs, 2);
-        *p++ = GS_SETREG_TEX0(m_uInputAddr, 256 / 64, GS_PSMT8, 8, 3,
-                              1, 0, m_uAttribSubPal, GS_PSMCT32, 0, 0, 1);            *p++ = GS_TEX0_1;
-        *p++ = GS_SETREG_ALPHA(1, 2, 0, 2, 0x80);                                     *p++ = GS_ALPHA_1;
-    }
-    _emit_tex_line(gs, 1, 2, 0x80808080, 1);
-
-    /*
-     * 5. Composite temp[0] (main, masked) and temp[1] (sub, masked or
-     *    fixed) into output[iLine]. XYOFFSET shifts the destination Y
-     *    by iLine*16 so the line-0 sprite lands on output line iLine.
-     *    bAddSub picks add or subtractive blend.
-     */
-    {
-        u64 *p = _alloc_ad(gs, 5);
-        *p++ = (u64)0;                                                                *p++ = GS_TEXFLUSH;
-        *p++ = GS_SETREG_FRAME(m_uOutAddr / 0x20, 256 / 64, GS_PSMCT32, 0);           *p++ = GS_FRAME_1;
-        *p++ = GS_SETREG_TEX0(m_uTempAddr, 256 / 64, GS_PSMCT32, 8, 3,
-                              1, 0, 0, 0, 0, 0, 0);                                   *p++ = GS_TEX0_1;
-        u64 alpha;
-        if (!bAddSub)
-        {
-            /* (Cs - 0) * Cs.A + Cd  -> additive */
-            alpha = GS_SETREG_ALPHA(1, 2, 2, 0, 0x80);
-        }
-        else
-        {
-            /* (Cs - Cd) * Cs.A + Cd  -> subtractive (negated) */
-            alpha = GS_SETREG_ALPHA(1, 0, 2, 2, 0x80);
-        }
-        *p++ = alpha;                                                                 *p++ = GS_ALPHA_1;
-        *p++ = GS_SETREG_XYOFFSET(0x8000, 0x8000 - (iLine << 4));                     *p++ = GS_XYOFFSET_1;
-    }
-
-    /* output[iLine] = main_masked              */
-    _emit_tex_line(gs, 0, 0, 0x80808080, 0);
-    /* output[iLine] += sub_masked (or fixed)   */
-    _emit_tex_line(gs, 0, 1, 0x80808080, 1);
-
-    /*
-     * 6. Apply the global intensity (snes "fade") as a multiplicative
-     *    pass: output *= (intensity * 0x80 / 15) using a solid-colour
-     *    sprite with ALPHA = (Cs - 0) * Cs.A + Cd.
-     */
-    {
-        u64 *p = _alloc_ad(gs, 2);
-        *p++ = GS_SETREG_ALPHA(1, 2, 0, 2, 0x80);                                     *p++ = GS_ALPHA_1;
-        *p++ = (u64)((uIntensity * 0x80 / 15) << 24);                                 *p++ = GS_RGBAQ;
-    }
-    _emit_solid_line(gs, 0, 1);
+    // set parameters of dma-list (writes go through UCAB alias)
+    _SNPPUBlendSetParm(&m_DmaList, iLine, uFixedColor32, bAddSub, uIntensity);
 
     PROF_LEAVE("SNPPUBlendExec");
 
-    /*
-     * 7. Submit and wait. Per-line synchronisation is required because
-     *    pInfo->uMain8 / uSub8 / uAttrib8 are scanline-scoped buffers
-     *    that the SNES core overwrites the moment Exec returns - if
-     *    the DMA were still in flight it would read the next line's
-     *    data.
-     */
-    PROF_ENTER("SNPPUGS");
-    gsKit_queue_exec(gs);
-    gsKit_finish();
-    PROF_LEAVE("SNPPUGS");
+    // transfer render list. The chain is in UCAB memory; use
+    // dmaKit_send_chain_ucab via the gsKit backend wrapper which
+    // strips the 0x30000000 alias before writing TADR.
+    GSK_SendChainUcab(m_DmaList.Data);
+
 }
+
+
 
 
 void SNPPUBlendGS::Clear(SNPPUBlendInfoT *pInfo, Int32 iLine)
 {
-    /* black scanline */
+    // render clear line
     Exec(pInfo, iLine, 0, NULL, 0, 0);
 }
+
+
+
+
+
+
+
+
+#endif
