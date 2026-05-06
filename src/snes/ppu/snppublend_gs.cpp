@@ -17,7 +17,6 @@ extern "C" {
 #include "gpfifo.h"
 #include "gs.h"
 #include "gslist.h"
-#include "gskit_backend.h"
 #include "ps2mem.h"
 }
 
@@ -342,8 +341,8 @@ static void _SNPPUBlendBuildList(SNPPUDmaListT *pList, SNPPUBlendInfoT *pInfo, U
 {
     PaletteT *pPal = pInfo->Pal;
 
-    // begin dma list (Data is a UCAB pointer so writes bypass cache)
-    GSListBegin(pList->Data, SNPPUBLEND_CHAIN_QWORDS, NULL);
+    // begin dma list
+    GSListBegin(pList->Data, sizeof(pList->Data) / sizeof(Uint128), NULL);
 
     GSDmaCntOpen();
 
@@ -552,12 +551,6 @@ SNPPUBlendGS::SNPPUBlendGS(Uint32 uVramAddr, Uint32 uOutAddr)
 
     m_pDmaBlendInfo = NULL;
 
-    /* Chain buffer lives in gsKit's UCAB pool (uncached + write
-       combined). 128 quadwords = 2 KB is enough for the full per
-       scanline blender chain that _SNPPUBlendBuildList builds. */
-    pList->Data = (Uint128 *)GSK_AllocUcab(
-        SNPPUBLEND_CHAIN_QWORDS * sizeof(Uint128));
-
     pList->uPalAddr        = uVramAddr + 0x000;
     pList->uInputAddr      = uVramAddr + 0x080 ;
     pList->uAttribMainPal  = uVramAddr + 0x180 ;
@@ -576,10 +569,11 @@ void SNPPUBlendGS::Exec(SNPPUBlendInfoT *pInfo, Int32 iLine, Uint32 uFixedColor3
 
     if (m_pDmaBlendInfo != pInfo)
     {
-        // build dma list for this blend info. The chain lives in
-        // UCAB memory so writes bypass the data cache; no
-        // FlushCache(0) is required before the DMA reads it.
+        // build dma list for this blend info
         _SNPPUBlendBuildList(&m_DmaList, pInfo, m_DmaList.uOutAddr);
+
+        // flush cache
+        FlushCache(0);
 
         m_pDmaBlendInfo = pInfo;
     }
@@ -598,15 +592,13 @@ void SNPPUBlendGS::Exec(SNPPUBlendInfoT *pInfo, Int32 iLine, Uint32 uFixedColor3
 
     PROF_ENTER("SNPPUBlendExec");
 
-    // set parameters of dma-list (writes go through UCAB alias)
+    // set parameters of dma-list
     _SNPPUBlendSetParm(&m_DmaList, iLine, uFixedColor32, bAddSub, uIntensity);
 
     PROF_LEAVE("SNPPUBlendExec");
 
-    // transfer render list. The chain is in UCAB memory; use
-    // dmaKit_send_chain_ucab via the gsKit backend wrapper which
-    // strips the 0x30000000 alias before writing TADR.
-    GSK_SendChainUcab(m_DmaList.Data);
+    // transfer render ilst
+    DmaExecGIFChain(m_DmaList.Data);
 
 }
 

@@ -200,27 +200,3 @@ int GSK_TakeInvalidatePending(void)
     _gsk_invalidate_pending = 0;
     return p;
 }
-
-void *GSK_AllocUcab(Uint32 nBytes)
-{
-    /* Round up to 16-byte alignment so the chain buffer can hold
-       full quadwords without partial-tag tails. */
-    Uint32 size = (nBytes + 15u) & ~15u;
-    return gsKit_alloc_ucab((int)size);
-}
-
-void GSK_FreeUcab(void *ptr)
-{
-    if (ptr) {
-        gsKit_free_ucab(ptr);
-    }
-}
-
-void GSK_SendChainUcab(void *chain)
-{
-    if (!chain) {
-        return;
-    }
-    DmaSyncGIF();
-    dmaKit_send_chain_ucab(DMA_CHANNEL_GIF, chain);
-}

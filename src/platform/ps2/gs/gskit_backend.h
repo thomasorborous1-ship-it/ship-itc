@@ -56,18 +56,6 @@ void GSK_SyncFlip(void);
    SNES blender after it overwrites texture VRAM via raw DMA. */
 void GSK_InvalidateTextureCache(void);
 
-/* Allocate a UCAB-mapped buffer (write-combined, uncached) suitable
-   for direct GIF DMA-chain submission. nBytes will be rounded up to
-   16-byte alignment. Returns NULL on failure. */
-void *GSK_AllocUcab(Uint32 nBytes);
-
-/* Free a buffer previously returned by GSK_AllocUcab. */
-void  GSK_FreeUcab(void *ptr);
-
-/* Submit a DMA chain (built in UCAB memory) on the GIF channel.
-   Equivalent to dmaKit_send_chain_ucab(DMA_CHANNEL_GIF, chain). */
-void  GSK_SendChainUcab(void *chain);
-
 #ifdef __cplusplus
 }
 #endif
