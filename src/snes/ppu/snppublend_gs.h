@@ -5,24 +5,12 @@
 
 #include "snppublend.h"
 
-struct SNPPUDmaListT
-{
-    Uint128     Data[128] _ALIGN(16);
-
-    Uint64      *pFixedColor;
-    Uint64      *pAddSub;
-    Uint64      *pIntensity;
-    Uint64      *pXYOffset;
-
-    Uint32      uPalAddr;
-    Uint32      uInputAddr;
-    Uint32      uAttribMainPal;
-    Uint32      uAttribSubPal;
-    Uint32      uTempAddr;
-
-	Uint32		uOutAddr;
-};
-
+/*
+ * Per-render-surface state for the gsKit-based blender. The legacy
+ * SNPPUDmaListT struct that owned a 2KB pre-baked GIF chain plus four
+ * patch pointers no longer exists - the chain is rebuilt in gsKit's
+ * drawbuffer heap on every Exec() call.
+ */
 struct SNPPUBlendColorCalibT
 {
 	Float32	y_mul,y_add;
@@ -34,8 +22,17 @@ struct SNPPUBlendColorCalibT
 
 class SNPPUBlendGS : public ISNPPUBlend
 {
-    SNPPUDmaListT m_DmaList _ALIGN(16);
-    SNPPUBlendInfoT *m_pDmaBlendInfo;
+    /* VRAM TBP addresses (256-byte units). Set up once by the
+     * constructor and never modified afterwards - the chain reads
+     * them as immediate values. */
+    Uint32      m_uPalAddr;
+    Uint32      m_uInputAddr;
+    Uint32      m_uAttribMainPal;
+    Uint32      m_uAttribSubPal;
+    Uint32      m_uTempAddr;
+    Uint32      m_uOutAddr;
+
+    class CRenderSurface *m_pTarget;
 
 public:
     SNPPUBlendGS(Uint32 uVramAddr, Uint32 uOutAddr);
