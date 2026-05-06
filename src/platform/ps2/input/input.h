@@ -31,6 +31,13 @@ void   InputPoll(void);
 Uint32 InputGetPadData(Uint32 uPad);
 Bool   InputIsPadConnected(Uint32 uPad);
 
+/* Returns digital d-pad bits (PAD_LEFT/RIGHT/UP/DOWN) synthesised from the
+   pad's left analog stick deflection. Returns 0 when the stick is inside
+   the dead zone, when the pad is disconnected, or when the controller is
+   not running in dualshock mode. Used by the UI/menu code so the analog
+   stick can drive menu navigation without polluting in-game input. */
+Uint32 InputGetPadDpadFromAnalog(Uint32 uPad);
+
 #ifdef __cplusplus
 }
 #endif

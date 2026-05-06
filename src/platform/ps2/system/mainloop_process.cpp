@@ -86,7 +86,22 @@ Bool MainLoopProcess()
     PROF_LEAVE("InputProcess");
 
 
-	_MainLoopInputProcess(InputGetPadData(0) | InputGetPadData(1) | InputGetPadData(2) | InputGetPadData(3));
+	{
+	    /* OR the digital pad bits with d-pad bits synthesised from each
+	       pad's left analog stick. The synthesised bits only travel
+	       through _MainLoopInputProcess (menu / screen-cycle / debug
+	       triggers), so SNES gameplay still uses the strictly digital
+	       _Input_PadData via _MainLoopInput. Result: the analog stick
+	       drives menu navigation just like InfinityStation, without
+	       leaking into the running game. */
+	    Uint32 buttons =
+	          InputGetPadData(0) | InputGetPadData(1)
+	        | InputGetPadData(2) | InputGetPadData(3)
+	        | InputGetPadDpadFromAnalog(0) | InputGetPadDpadFromAnalog(1)
+	        | InputGetPadDpadFromAnalog(2) | InputGetPadDpadFromAnalog(3);
+
+	    _MainLoopInputProcess(buttons);
+	}
 
 //	_MainLoopInputProcess(InputGetPadData(0));
 //	_MainLoopInputProcess(InputGetPadData(1));
