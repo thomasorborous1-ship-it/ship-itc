@@ -15,6 +15,7 @@ extern "C" {
 #include <kernel.h>
 #include "ps2dma.h"
 #include "gpfifo.h"
+#include "gpprim.h"
 #include "gs.h"
 #include "gslist.h"
 #include "ps2mem.h"
@@ -277,21 +278,43 @@ void SNPPUBlendGS::Begin(CRenderSurface *pTarget)
 		return;
 	}
 
-    // these are constants!
-    _GPFifoUploadTexture(
-         m_DmaList.uAttribMainPal * 0x100, 
-         64, 0, 0, 
-         GS_PSMCT32, 
-         _SNPPUBlend_AttribMainPal, 
-         16, 
+    /* Fase 3 narrow: the two attrib-pal uploads in Begin() are the
+       only constant uploads on the SNES blender path (the four uploads
+       inside _SNPPUBlendBuildList are dynamic - they sit inside the
+       per-scanline GIF chain via REF tags so they pick up live PPU
+       data on every kick). Routing the constants through gsKit's
+       texture-send helper instead of the hand-rolled REF chain keeps
+       them inside gsKit's queue and frees us from one slot in the
+       legacy gslist double-buffer.
+
+       The legacy _GPFifoUploadTexture took TBP in bytes (it divides
+       by 256 internally to encode BITBLTBUF.DBP); GPPrimUploadTexture
+       takes TBP in 256-byte units (it multiplies by 256 internally).
+       m_DmaList.uAttribMainPal / uAttribSubPal are already stored in
+       TBP units, so drop the * 0x100 that converted to bytes for the
+       legacy call.
+
+       Note: only 8 Uint32 of source are valid but the upload size is
+       16 x 16 PSMCT32 (1024 bytes). The blender uses CSM1 which
+       expects the palette to be laid out in a 16x16 PSMCT32 tile, so
+       we keep the same dimensions as the legacy upload. The 992
+       bytes past the end of _SNPPUBlend_AttribMainPal are unused by
+       the blender (TEXCLUT only reads the first eight entries) so
+       the over-read is benign and matches pre-Fase-3 behaviour. */
+    GPPrimUploadTexture(
+         m_DmaList.uAttribMainPal,
+         64, 0, 0,
+         GS_PSMCT32,
+         _SNPPUBlend_AttribMainPal,
+         16,
          16);
 
-    _GPFifoUploadTexture(
-         m_DmaList.uAttribSubPal * 0x100, 
-         64, 0, 0, 
-         GS_PSMCT32, 
-         _SNPPUBlend_AttribSubPal, 
-         16, 
+    GPPrimUploadTexture(
+         m_DmaList.uAttribSubPal,
+         64, 0, 0,
+         GS_PSMCT32,
+         _SNPPUBlend_AttribSubPal,
+         16,
          16);
 
 
