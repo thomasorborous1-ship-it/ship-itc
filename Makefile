@@ -295,7 +295,19 @@ iso-root: $(TARGET) iso-check
 	@rm -rf "$(ISO_ROOT_DIR)"
 	@mkdir -p "$(ISO_ROOT_DIR)"
 	@cp "$(TARGET)" "$(ISO_ROOT_DIR)/$(ISO_BOOT)"
-	@printf '%s\n' \
+	@# Strip the in-iso ELF copy. Real PS2 BIOS / OPL / strict
+	@# emulators (AetherSX2, ArmSX2) refuse to load ELFs with debug
+	@# sections present; only NetherSX2 is permissive. The host build
+	@# under build/ stays unstripped for symbol info.
+	@if command -v $(EE_STRIP) >/dev/null 2>&1; then \
+		$(EE_STRIP) "$(ISO_ROOT_DIR)/$(ISO_BOOT)"; \
+		echo "[iso-root] stripped $(ISO_BOOT)"; \
+	fi
+	@# SYSTEM.CNF must use CRLF line endings: real PS2 BIOS and the
+	@# AetherSX2 / ArmSX2 / OPL parsers reject LF-only files (silent
+	@# failure: black screen). NetherSX2 accepts LF, which masked the
+	@# bug. Use printf with literal \r\n.
+	@printf '%s\r\n' \
 		"BOOT2 = cdrom0:\\$(ISO_BOOT);1" \
 		"VER = 1.00" \
 		"VMODE = $(ISO_VMODE)" > "$(ISO_ROOT_DIR)/SYSTEM.CNF"
@@ -335,10 +347,30 @@ iso-root: $(TARGET) iso-check
 		echo "[iso-root] cdroot extras copiados"; \
 	fi
 
+# Probe order is mkisofs -> genisoimage -> xorriso. Real mkisofs and
+# genisoimage emit a stricter ISO9660 level-1 PVD than xorriso's
+# mkisofs emulation, which is what OPL's CDVDMAN expects (it walks
+# the path table assuming a 14-char filename buffer; xorriso
+# sometimes leaks long names from the Joliet -joliet-long extension
+# into the PVD path table and overflows that buffer -> blank screen).
+# xorriso stays as a fallback so the build still works on systems
+# that only ship libisoburn.
+#
+# Common flags across all three:
+#   -iso-level 1   strict 8.3 names in the PVD (OPL requirement).
+#                  Joliet (-J) provides long names in the SVD only.
+#   -pad           pad the image to a multiple of 16 sectors. Real
+#                  PS2 hardware and AetherSX2 both validate the
+#                  trailing sector count; without -pad the disc may
+#                  be reported as size 0 by libcdvd.
+#   -sysid/-A/-publisher PLAYSTATION   matches the Sony master disc
+#                  PVD layout. AetherSX2's CDVD detector keys on
+#                  these strings to flag the image as a PS2 game.
 iso: iso-root
 	@mkdir -p "$$(dirname "$(ISO_OUT)")"
-	@if command -v xorriso >/dev/null 2>&1; then \
-		xorriso -as mkisofs \
+	@if command -v mkisofs >/dev/null 2>&1; then \
+		mkisofs \
+			-iso-level 1 -pad \
 			-V "$(ISO_LABEL)" \
 			-sysid PLAYSTATION \
 			-A PLAYSTATION \
@@ -348,6 +380,7 @@ iso: iso-root
 			"$(ISO_ROOT_DIR)"; \
 	elif command -v genisoimage >/dev/null 2>&1; then \
 		genisoimage \
+			-iso-level 1 -pad \
 			-V "$(ISO_LABEL)" \
 			-sysid PLAYSTATION \
 			-A PLAYSTATION \
@@ -355,8 +388,9 @@ iso: iso-root
 			-J -joliet-long \
 			-o "$(ISO_OUT)" \
 			"$(ISO_ROOT_DIR)"; \
-	elif command -v mkisofs >/dev/null 2>&1; then \
-		mkisofs \
+	elif command -v xorriso >/dev/null 2>&1; then \
+		xorriso -as mkisofs \
+			-iso-level 1 -pad \
 			-V "$(ISO_LABEL)" \
 			-sysid PLAYSTATION \
 			-A PLAYSTATION \
