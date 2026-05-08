@@ -187,6 +187,35 @@ void GSK_SyncFlip(void)
     gsKit_sync_flip(_pGsGlobal);
 }
 
+void GSK_ResetFrame(void)
+{
+    GSGLOBAL *gs;
+    u64 *p_data;
+
+    if (!_gsk_initialised || !_pGsGlobal) {
+        return;
+    }
+
+    gs = _pGsGlobal;
+
+    /* Allocate a one-register A+D GIF tag in gsKit's heap. The queue
+       will dispatch it before any subsequent prim, so FRAME_1 is
+       refreshed before drawing actually happens. */
+    p_data = (u64 *)gsKit_heap_alloc(gs, 1, 16, GIF_AD);
+    if (!p_data) {
+        return;
+    }
+
+    *p_data++ = GIF_TAG_AD(1);
+    *p_data++ = GIF_AD;
+    *p_data++ = GS_SETREG_FRAME_1(
+        gs->ScreenBuffer[gs->ActiveBuffer & 1] / 8192,
+        gs->Width / 64,
+        gs->PSM,
+        0);
+    *p_data++ = GS_REG_FRAME_1;
+}
+
 void GSK_InvalidateTextureCache(void)
 {
     _gsk_invalidate_pending = 1;
