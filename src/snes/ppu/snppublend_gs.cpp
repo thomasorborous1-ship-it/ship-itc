@@ -19,6 +19,7 @@ extern "C" {
 #include "gs.h"
 #include "gslist.h"
 #include "ps2mem.h"
+#include "gskit_backend.h"
 }
 
 #define SNPPUBLEND_PAL32 (TRUE)
@@ -353,6 +354,22 @@ void SNPPUBlendGS::End()
 	GSGifRegAD(GS_REG_FRAME_1, GS_GetFrameReg());
 	GSGifRegAD(GS_REG_XYOFFSET_1, GS_GetOffsetReg());
     GSGifTagCloseAD();
+
+    /* The blender chain has just rendered into _OutTex via raw GIF
+       DMA (FRAME_1 = uOutAddr). The next gsKit textured prim that
+       samples _OutTex (PolyTexture(&_OutTex) + PolyRect in
+       MainLoopRender) needs an explicit TEXFLUSH before sampling, or
+       the GS hardware texture cache will keep serving the stale
+       texels it cached on the previous frame. Without this, on
+       hardware and on emulators, the visible output is whatever was
+       in the texture cache before the blender ran - typically a
+       mostly-black screen, with a brief correct frame whenever some
+       other path (e.g. menu font upload via GPPrimUploadTexture, on
+       L2+R2 or on menu redraw) happens to call
+       GSK_InvalidateTextureCache for an unrelated reason. Hooking
+       the invalidate here closes that race so every gsKit sample of
+       _OutTex sees the fresh blender output. */
+    GSK_InvalidateTextureCache();
 
     m_pTarget = NULL;
 }
