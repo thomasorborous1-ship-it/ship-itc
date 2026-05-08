@@ -56,6 +56,23 @@ void GSK_SyncFlip(void);
    SNES blender after it overwrites texture VRAM via raw DMA. */
 void GSK_InvalidateTextureCache(void);
 
+/* Returns the uncached (KSEG1) alias of a kernel-space pointer that
+   currently points into cached physical RAM (KSEG0, <256MB). The alias
+   is the same byte address with bit 29 set: the EE bus reads/writes
+   bypass the data cache, so a peripheral DMA reading the same physical
+   line sees stores immediately without a FlushCache.
+
+   Used (or about to be used) by the SNES blender when it patches
+   per-scanline parameters into a chain that the GIF DMA is about to
+   read. The legacy gslist path achieves the same with
+   GSListGetUncachedPtr; this helper is the gsKit-side equivalent that
+   does not depend on a gslist context. Returns the input pointer
+   unchanged (with an assert in CODE_DEBUG builds) if the address is
+   already uncached or otherwise outside physical RAM.
+
+   Fase 1B GS->gsKit migration. */
+void *GSK_AsUncached(void *ptr);
+
 #ifdef __cplusplus
 }
 #endif
