@@ -620,6 +620,21 @@ void SNPPUBlendGS::Exec(SNPPUBlendInfoT *pInfo, Int32 iLine, Uint32 uFixedColor3
 
     PROF_LEAVE("SNPPUBlendExec");
 
+    /* Commit the cached EE-side scanline buffers back to RAM before
+       kicking the DMA. The chain references pInfo->Pal / uMain8 /
+       uSub8 / uAttrib8 with the 0x80000000 (KSEG1 / UCAB) bit set, so
+       the GIF DMA reads them directly from physical memory and bypasses
+       the EE L1 dcache. The PPU scanline writes (snppurender) and the
+       _PlanarTo3 attrib build above happen through cached pointers, so
+       without an explicit writeback the DMA almost always sees stale
+       data - which is exactly the "mostly-black with a rare correct
+       frame when something else evicts the line" symptom on hardware
+       and emulator. */
+    SyncDCache(&pInfo->Pal[0],   ((Uint8 *)&pInfo->Pal[0])   + sizeof(pInfo->Pal));
+    SyncDCache(pInfo->uMain8,    pInfo->uMain8   + sizeof(pInfo->uMain8));
+    SyncDCache(pInfo->uSub8,     pInfo->uSub8    + sizeof(pInfo->uSub8));
+    SyncDCache(pInfo->uAttrib8,  pInfo->uAttrib8 + sizeof(pInfo->uAttrib8));
+
     // transfer render ilst
     DmaExecGIFChain(m_DmaList.Data);
 
