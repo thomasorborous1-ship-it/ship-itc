@@ -70,19 +70,6 @@ void GS_SetEnv(int width, int height, int fbp1, int fbp2,
              _gs_mode, _gs_interlace);
 }
 
-void GS_SetCrtFB(int buffer)
-{
-    /* Framebuffer flipping is owned by gsKit_sync_flip(), which is
-       called from MainLoopRender(). Nothing to do here. */
-    (void)buffer;
-}
-
-void GS_SetDrawFB(int buffer)
-{
-    /* Same as GS_SetCrtFB - gsKit owns the active draw buffer. */
-    (void)buffer;
-}
-
 u64 GS_GetFrameReg(void)
 {
     GSGLOBAL *gs = GSK_GetGlobal();
@@ -107,9 +94,4 @@ u64 GS_GetOffsetReg(void)
        space; OffsetX / OffsetY are 4-bit fixed-point pixel offsets
        into that space, exactly what the XYOFFSET register expects. */
     return GS_SET_XYOFFSET(gs->OffsetX, gs->OffsetY);
-}
-
-void GS_VSync(void)
-{
-    /* gsKit_sync_flip() inside MainLoopRender() handles vsync. */
 }

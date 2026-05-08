@@ -26,7 +26,6 @@
 #include "mainloop_shared.h"
 #include "mainloop_state.h"
 #include "types.h"
-#include "vram.h"
 #include "mainloop.h"
 #include "console.h"
 #include "input.h"
