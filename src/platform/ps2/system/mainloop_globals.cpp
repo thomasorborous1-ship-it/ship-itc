@@ -77,6 +77,8 @@ Emu::System *_pSystem;
 CRenderSurface *_fbTexture[2];
 
 TextureT _OutTex;
+Uint32 _MainLoop_uOutTexTBP  = 0;
+Uint32 _MainLoop_uBlenderTBP = 0;
 #ifdef DEBUG
 CWavFile _WavFile;
 #endif

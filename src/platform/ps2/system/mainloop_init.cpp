@@ -52,6 +52,7 @@ extern "C" {
 #include "gs.h"
 #include "gpfifo.h"
 #include "gpprim.h"
+#include "gskit_backend.h"
 };
 
 extern "C" {
@@ -184,6 +185,31 @@ dispx = MAINLOOP_DISPX;
 	GS_SetDispMode(dispx,dispy, MAINLOOP_SCREENWIDTH, MAINLOOP_SCREENHEIGHT);
 BOOTLOG("[boot] GS_SetEnv()\n");
 	GS_SetEnv(MAINLOOP_SCREENWIDTH, MAINLOOP_SCREENHEIGHT, FB0, FB1, GS_PSMCT32, Z0, GS_PSMZ16S);
+
+	/* Reserve the SNES output texture and the blender scratchpad
+	   through gsKit's VRAM allocator so the addresses live in the
+	   same arena gsKit picked for FB0/FB1. The output region is
+	   shared between _OutTex (sampled by MainLoopRender) and the
+	   blender's render-to-texture target, so they must come from the
+	   same allocation. The blender slab needs 0x300 TBP units to fit
+	   palette / input planes / attribute clut / temp at its hard-coded
+	   offsets (Pal=+0x000, Input=+0x080, AttribMainPal=+0x180,
+	   AttribSubPal=+0x184, Temp=+0x200). */
+	_MainLoop_uOutTexTBP  = GSK_VramAllocTBP(256 * 256 * 4);
+	_MainLoop_uBlenderTBP = GSK_VramAllocTBP(0x300 * 256);
+	if (_MainLoop_uOutTexTBP == 0 || _MainLoop_uBlenderTBP == 0)
+	{
+		/* gsKit allocator refused. Fall back to the legacy hard-coded
+		   layout so the boot still proceeds; this matches the pre-Fase
+		   1A behaviour exactly. */
+		printf("[boot] GSK_VramAllocTBP failed (out=%u blend=%u), falling back to legacy layout\n",
+			_MainLoop_uOutTexTBP, _MainLoop_uBlenderTBP);
+		_MainLoop_uOutTexTBP  = TEXADDR;
+		_MainLoop_uBlenderTBP = 0x3C00;
+	}
+	printf("[boot] _OutTex TBP=0x%04X, Blender TBP=0x%04X\n",
+		(unsigned)_MainLoop_uOutTexTBP, (unsigned)_MainLoop_uBlenderTBP);
+
 GPFifoInit((Uint128 *)_MainLoop_GfxPipe, sizeof(_MainLoop_GfxPipe));
     PolyInit();
     FontInit(FONT_TEX);
@@ -249,7 +275,7 @@ BOOTLOG("[boot] WaitForNextVRstart begin (120 iters)\n");
     _fbTexture[1]->Clear();
 	BOOTLOG("[boot] TextureNew(_OutTex)\n");
     TextureNew(&_OutTex, 256, 256, GS_PSMCT32);
-    TextureSetAddr(&_OutTex, TEXADDR );
+    TextureSetAddr(&_OutTex, _MainLoop_uOutTexTBP);
 TextureUpload(&_OutTex, _fbTexture[0]->GetLinePtr(0));
 #if 0
 	_MainLoopSetPalette(NESPAL_FCEU);
