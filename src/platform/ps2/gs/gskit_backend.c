@@ -12,10 +12,12 @@
 
 #include <gsKit.h>
 #include <dmaKit.h>
+#include <gsInline.h>
 #include <gsToolkit.h>
 
 #include "types.h"
 #include "ps2dma.h"
+#include "gs.h"
 #include "gskit_backend.h"
 
 /* The original headers use these constants for mode / interlace. They
