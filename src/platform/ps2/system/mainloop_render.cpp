@@ -70,6 +70,15 @@ void MainLoopRender()
         static int whichdrawbuf = 0;
 
 
+    /* Re-anchor FRAME_1 to gsKit's current draw buffer before any
+       primitive runs this frame. The legacy GS_SetDrawFB used to do
+       this implicitly per frame; gsKit_sync_flip only swaps the
+       display buffer, not the draw buffer. Without this, prims drew
+       to a stale (or, after the SNES blender ran, completely wrong)
+       buffer and the visible framebuffer flickered black on every
+       other frame. See gskit_backend.h for the longer rationale. */
+    GSK_ResetFrame();
+
     // render frame
     GPPrimDisableZBuf();
 
