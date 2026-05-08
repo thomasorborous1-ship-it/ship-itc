@@ -78,7 +78,6 @@ src/platform/ps2/ui/uiLog.cpp
 src/platform/ps2/ui/uiMenu.cpp
 src/platform/ps2/ui/uiNetwork.cpp
 src/platform/ps2/system/version.cpp
-src/common/render/vram.c
 src/common/render/wavfile.cpp
 src/common/debug/dbgterm.cpp
 src/platform/ps2/system/mainloop_state.cpp

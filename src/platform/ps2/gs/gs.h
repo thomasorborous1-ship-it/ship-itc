@@ -217,9 +217,10 @@ typedef struct {
 
 void GS_InitGraph(int mode, int interlace); // Initialise the GS
 void GS_SetEnv(int width, int height, int fbp1, int fbp2, int psm, int zbp, int zbpsm); // Set up drawing enviroment
-void GS_SetDrawFB(int buffer); // Set the active drawing enviroment
-void GS_SetCrtFB(int buffer); // Set the active display enviroment
 void GS_SetDispMode(int dx, int dy, int width, int height); // Set the GS display mode
+/* Used by snppublend_gs.cpp to restore FRAME_1 / XYOFFSET_1 after the
+   blender's per-scanline GIF chain mutates them. The values are read
+   from the live gsKit GSGLOBAL state. */
 u64 GS_GetFrameReg();
 u64 GS_GetOffsetReg();
 

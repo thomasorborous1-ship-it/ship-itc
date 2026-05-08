@@ -17,7 +17,6 @@
 #include "mainloop_net.h"
 #include "mainloop_ui.h"
 #include "types.h"
-#include "vram.h"
 #include "mainloop.h"
 #include "console.h"
 #include "input.h"

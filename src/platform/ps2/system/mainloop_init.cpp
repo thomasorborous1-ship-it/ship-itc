@@ -25,7 +25,6 @@
 #include "mainloop.h"
 
 #include "types.h"
-#include "vram.h"
 #include "input.h"
 #include "snes.h"
 #include "rendersurface.h"
@@ -247,8 +246,10 @@ GPFifoInit((Uint128 *)_MainLoop_GfxPipe, sizeof(_MainLoop_GfxPipe));
 	// set boot dir
 	strcpy(_MainLoop_BootDir, MainGetBootDir());
     _MainLoopLoadModules(_MainLoop_IOPModulePaths);
-	BOOTLOG("[boot] VramInit()\n");
-	VramInit();
+	/* The legacy VramInit() bumped a software VRAM watermark used by
+	   the now-deleted VramAlloc helper. gsKit owns the GS-side VRAM
+	   allocator (gskit_backend.c::GSK_VramAllocTBP) so there is
+	   nothing left to initialise here. */
 _SJPCMMix = new SJPCMMixBuffer(32000, TRUE);
 	#if CODE_DEBUG
     printf("MainLoopInit\n");
