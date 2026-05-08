@@ -28,23 +28,23 @@ EmuShellSysID CEmuShell::ResolveSysByPath(char *pPath, Bool *pbCompressed)
 	pExt = PathExtGet(str);
 	if (pExt)
 	{
-		eType = GetSysIDByExt(pExt + 1);
-		// is it an invalid type
-		if (eType != EMUSHELL_SYSID_INVALID)
+		// is the outer extension a transparent compression wrapper? if so,
+		// strip it and look at the inner extension instead.
+		if (!strcmp(pExt, ".gz"))
 		{
-			if (!strcmp(pExt,".gz"))
-			{
-				// its a compressed file
+			if (pbCompressed)
 				*pbCompressed = TRUE;
-				// remove extension
-				*pExt = 0;
+			*pExt = 0;
+			pExt = PathExtGet(str);
+		}
 
-				pExt = PathExtGet(str);
-			}
+		if (pExt)
+		{
+			eType = GetSysIDByExt(pExt + 1);
 		}
 	}
 
-	return EMUSHELL_SYSID_INVALID;
+	return eType;
 }
 #endif
 
@@ -273,7 +273,27 @@ Bool CEmuShell::LoadRom(Char *pRomFile, Uint8 *pBuffer, Uint32 nBufferBytes)
 		return FALSE;
 	}
 #else
-	eType = 0;
+	{
+		char path[256];
+		strncpy(path, pRomFile, sizeof(path) - 1);
+		path[sizeof(path) - 1] = 0;
+
+		char *pExt = PathExtGet(path);
+		if (pExt && !strcmp(pExt, ".gz"))
+		{
+			bCompressed = TRUE;
+			*pExt = 0;
+			pExt = PathExtGet(path);
+		}
+
+		EmuShellSysT *pSys = pExt ? FindSysByExt(pExt + 1) : NULL;
+		if (!pSys)
+		{
+			return FALSE;
+		}
+
+		eType = (Int32)(pSys - m_Systems);
+	}
 #endif
 	// set current system 
 	m_pSystem = m_Systems[eType].pSystem;
