@@ -8,6 +8,7 @@
 
 #include <stdio.h>
 #include <string.h>
+#include <assert.h>
 
 #include <gsKit.h>
 #include <dmaKit.h>
@@ -199,4 +200,31 @@ int GSK_TakeInvalidatePending(void)
     int p = _gsk_invalidate_pending;
     _gsk_invalidate_pending = 0;
     return p;
+}
+
+void *GSK_AsUncached(void *ptr)
+{
+    Uint32 addr = (Uint32)ptr;
+
+    /* NULL stays NULL. */
+    if (!addr) {
+        return ptr;
+    }
+
+    /* Only KSEG0 / KUSEG cached pointers (top nibble 0x0..0x1, i.e.
+       byte address < 0x20000000) can be aliased through KSEG1 by
+       setting bit 29. Anything in 0x20000000+ is already uncached
+       (KSEG1) or is a kernel/io segment that must not be touched
+       through the alias trick.
+
+       PS2 main RAM is 32MB at 0x00000000-0x01FFFFFF, so any legitimate
+       pointer into a buffer the EE allocates falls well below the
+       0x10000000 threshold. We assert a tighter bound (<256MB) to
+       catch accidental use with stack/scratchpad/IO addresses while
+       still allowing future memory-map changes. The assert is
+       compile-out in CODE_RELEASE so it has zero hot-path cost. */
+    assert((addr & 0xF0000000) == 0 &&
+           "GSK_AsUncached: pointer is outside physical RAM (<256MB)");
+
+    return (void *)(addr | 0x20000000);
 }
