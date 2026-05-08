@@ -2,6 +2,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
+#include <malloc.h>
 #include "types.h"
 #include "surface.h"
 
@@ -168,8 +169,10 @@ void CSurface::Alloc(Uint32 uWidth, Uint32 uHeight, PixelFormatT *pFormat)
 		m_uHeight = uHeight;
 		m_uPitch  = uWidth * m_Format.uBitDepth / 8;
 
-		// allocate surface
-		m_pMem   = (Uint8 *)malloc(m_uHeight * m_uPitch + 1);
+		// allocate surface (64-byte aligned: this buffer feeds GS DMA paths
+		// like TextureUpload/BITBLTBUF, which require at least 16-byte
+		// alignment; 64 matches the EE cache-line size)
+		m_pMem   = (Uint8 *)memalign(64, m_uHeight * m_uPitch + 1);
 
 		m_pData  = (Uint8 *)m_pMem;
 	}
@@ -181,12 +184,12 @@ void CSurface::Free()
 	{
 		free(m_pMem);
 		m_pMem   = NULL;
-		memset(&m_Format, 0, sizeof(m_Format));
 	}
 
 	m_uWidth  = 0;
 	m_uHeight = 0;
 	m_uPitch  = 0;
-	m_pData  = NULL;
+	m_pData   = NULL;
+	memset(&m_Format, 0, sizeof(m_Format));
 }
 

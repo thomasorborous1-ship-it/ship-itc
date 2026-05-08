@@ -32,7 +32,10 @@ static void _RenderLine24(Uint8 *pDest, Uint8 *pSrc, Int32 nPixels, PaletteT *pC
 {
     while (nPixels > 0)
     {
-        ((Uint32 *)pDest)[0] = (Uint32)pClut->Color32[*pSrc];
+        Uint32 c = (Uint32)pClut->Color32[*pSrc];
+        pDest[0] = (Uint8)(c >>  0);
+        pDest[1] = (Uint8)(c >>  8);
+        pDest[2] = (Uint8)(c >> 16);
         pDest += 3;
         pSrc++;
         nPixels--;
