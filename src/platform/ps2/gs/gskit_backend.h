@@ -52,27 +52,21 @@ void GSK_FlushFrame(void);
    called once per frame, after GSK_FlushFrame. */
 void GSK_SyncFlip(void);
 
-/* Emit a FRAME_1 register write into gsKit's queue, pointing at the
-   currently active draw buffer (gsGlobal->ScreenBuffer[ActiveBuffer]).
-   Use this at the start of a render frame so that subsequent gsKit
-   primitives draw to the right buffer.
+/* Emit FRAME_1 and XYOFFSET_1 register writes into gsKit's queue,
+   pointing at the currently active draw buffer and restoring the
+   coordinate origin gsKit expects. Use this at the start of a render
+   frame so that subsequent gsKit primitives draw to the right buffer
+   at the right position.
 
-   Why this is needed: the legacy SNESticle pipeline used to call
-   GS_SetDrawFB() each frame, which programmed the FRAME_1 register
-   pointing at the new draw buffer. After the GS->gsKit migration,
-   GS_SetDrawFB is a no-op and gsKit_sync_flip only updates DISPFB1
-   (the *display* buffer), not FRAME_1 (the *draw* buffer). On top of
-   that, the SNES per-scanline blender steers FRAME_1 to its
+   Why FRAME_1: the SNES per-scanline blender steers FRAME_1 to its
    render-to-texture target every frame and only restores it through
-   the legacy gpfifo chain, which is dispatched *after* gsKit's queue
-   has already drained. The net effect is that gsKit draws to a
-   stale (or wrong) buffer for at least one frame after each flip,
-   visible as a permanent black screen on hardware.
+   the legacy gpfifo chain, which is dispatched *after* gsKit's queue.
 
-   GSK_ResetFrame is a small, stateful insurance: it queues exactly
-   one register write that re-anchors FRAME_1 to gsKit's chosen draw
-   buffer for the current frame. Cheap (one GIF tag, ~16 bytes) and
-   idempotent. */
+   Why XYOFFSET_1: the blender overwrites XYOFFSET_1 on every scanline
+   with (0x8000, 0x8000 - iLine*16). Its restore also goes through
+   the gpfifo chain, so any gsKit prim queued before gpfifo dispatch
+   draws with the blender's stale offset — shifting the sprite
+   hundreds of pixels off-screen (the frozen-menu symptom). */
 void GSK_ResetFrame(void);
 
 /* Force a TEXFLUSH next time we draw a textured prim. Used by the
