@@ -200,15 +200,27 @@ void GSK_ResetFrame(void)
 
     gs = _pGsGlobal;
 
-    /* Allocate a one-register A+D GIF tag in gsKit's heap. The queue
-       will dispatch it before any subsequent prim, so FRAME_1 is
-       refreshed before drawing actually happens. */
-    p_data = (u64 *)gsKit_heap_alloc(gs, 1, 16, GIF_AD);
+    /* Allocate a two-register A+D GIF tag in gsKit's heap.  The queue
+       will dispatch it before any subsequent prim, so both FRAME_1 and
+       XYOFFSET_1 are refreshed before drawing actually happens.
+
+       XYOFFSET_1 must be restored here because the SNES per-scanline
+       blender (snppublend_gs.cpp) overwrites it on every Exec() call
+       with a line-specific value (0x8000, 0x8000 - iLine*16).  The
+       blender's End() restores it through the GPFifo chain, but that
+       chain is dispatched *after* gsKit's queue has already drained
+       (see GPFifoPause → GSK_DrainAndWait ordering).  Any gsKit
+       textured prim queued between End() and GPFifoFlush therefore
+       draws with the blender's stale XYOFFSET, which shifts the
+       sprite hundreds of pixels off-screen — the visible symptom is a
+       permanently frozen menu image because the game output never
+       lands inside the visible framebuffer area. */
+    p_data = (u64 *)gsKit_heap_alloc(gs, 2, 32, GIF_AD);
     if (!p_data) {
         return;
     }
 
-    *p_data++ = GIF_TAG_AD(1);
+    *p_data++ = GIF_TAG_AD(2);
     *p_data++ = GIF_AD;
     *p_data++ = GS_SETREG_FRAME_1(
         gs->ScreenBuffer[gs->ActiveBuffer & 1] / 8192,
@@ -216,6 +228,8 @@ void GSK_ResetFrame(void)
         gs->PSM,
         0);
     *p_data++ = GS_REG_FRAME_1;
+    *p_data++ = GS_SETREG_XYOFFSET_1(gs->OffsetX, gs->OffsetY);
+    *p_data++ = GS_XYOFFSET_1;
 }
 
 void GSK_InvalidateTextureCache(void)
