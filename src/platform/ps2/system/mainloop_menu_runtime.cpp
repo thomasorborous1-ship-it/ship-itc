@@ -91,23 +91,34 @@ void _MenuEnable(Bool bEnable)
 
 		_bMenu = bEnable;
 
-		/* When the user pops the menu open mid-game (typically via the
-		   L2+R2 combo handled in mainloop_input.cpp) the SNES core is
-		   no longer executed and SJPCMMixBuffer::Flush stops feeding
-		   audsrv. The IOP-side ring buffer, however, still holds up
-		   to ~5120 stereo frames (~107 ms at 48 kHz) of stale samples
-		   and audsrv keeps draining / looping them — audible as a
-		   short loop / drone of the last SNES audio after pressing
-		   L2+R2 to exit to the menu. Drop the queue here so the
-		   transition is silent. Audio resumes automatically when the
-		   user closes the menu: SjPCMMixBuffer::Flush will call
-		   SjPCM_Enqueue again and audsrv plays the new samples.
-		   Gated on _MainLoop_bSjPCMReady for symmetry with the boot
-		   sequence in mainloop_init.cpp (SjPCM_Clearbuff itself is
-		   already a no-op when audsrv failed to initialise). */
-		if (bEnable && _MainLoop_bSjPCMReady)
+		/* Silence (and restore) the audsrv output when the in-game
+		   menu is opened / dismissed (typically via the L2+R2 combo
+		   handled in mainloop_input.cpp). The SNES core stops being
+		   executed while the menu is up so SJPCMMixBuffer::Flush no
+		   longer feeds audsrv, but the IOP-side play_thread is always
+		   running: once the legitimate ~5120 stereo frames (~107 ms
+		   at 48 kHz) drain it keeps reading the same ring buffer
+		   region over and over, audible as a short drone / loop of
+		   the last SNES audio.
+
+		   We mute via SjPCM_Setvol(0) rather than SjPCM_Clearbuff
+		   (audsrv_stop_audio) because the latter sets audsrv's
+		   `playing` flag to 0, which freezes the IOP-side readpos and
+		   writepos and prevents audsrv_available() from ever
+		   advancing. The next SjPCM_Enqueue(...,wait=1) issued by
+		   SJPCMMixBuffer::Flush after the menu is dismissed then
+		   deadlocks inside audsrv_wait_audio, which is what made the
+		   audio stay dead until an emulator reset. Volume mute keeps
+		   audsrv in its normal playing state: the queue keeps
+		   draining, audsrv_wait_audio stays unblocked, and audio
+		   resumes the moment the SNES core writes new samples after
+		   the menu is closed. 0x3FFF is full scale in the 14-bit
+		   SjPCM_Setvol scale (rescaled to audsrv's MAX_VOLUME). Gated
+		   on _MainLoop_bSjPCMReady for symmetry with the boot
+		   sequence in mainloop_init.cpp. */
+		if (_MainLoop_bSjPCMReady)
 		{
-			SjPCM_Clearbuff();
+			SjPCM_Setvol(bEnable ? 0 : 0x3FFF);
 		}
 	}
 }
