@@ -200,9 +200,10 @@ void GSK_ResetFrame(void)
 
     gs = _pGsGlobal;
 
-    /* Allocate a two-register A+D GIF tag in gsKit's heap.  The queue
-       will dispatch it before any subsequent prim, so both FRAME_1 and
-       XYOFFSET_1 are refreshed before drawing actually happens.
+    /* Allocate a three-register A+D GIF tag in gsKit's heap.  The
+       queue will dispatch it before any subsequent prim, so FRAME_1,
+       XYOFFSET_1 and ALPHA_1 are all refreshed before drawing
+       actually happens.
 
        XYOFFSET_1 must be restored here because the SNES per-scanline
        blender (snppublend_gs.cpp) overwrites it on every Exec() call
@@ -214,13 +215,33 @@ void GSK_ResetFrame(void)
        draws with the blender's stale XYOFFSET, which shifts the
        sprite hundreds of pixels off-screen — the visible symptom is a
        permanently frozen menu image because the game output never
-       lands inside the visible framebuffer area. */
-    p_data = (u64 *)gsKit_heap_alloc(gs, 2, 32, GIF_AD);
+       lands inside the visible framebuffer area.
+
+       ALPHA_1 must be restored here for the symmetric reason:  the
+       blender's per-scanline DMA chain rewrites ALPHA_1 several times
+       (snppublend_gs.cpp _SNPPUBlendBuildList) and leaves it at
+       GS_SET_ALPHA(1, 2, 0, 2, 0x80), i.e. output = (Cd - 0) * As + 0
+       = Cd * As.  The blender's End() does *not* restore ALPHA_1, and
+       gsKit's prim helpers (gsKit_prim_sprite,
+       gsKit_prim_sprite_texture_3d, ...) emit only PRIM / color / XY
+       per draw — they never re-emit ALPHA_1.  The gsKit init value
+       set via gsKit_set_primalpha (GS_SETREG_ALPHA(0, 1, 0, 1, 0x80)
+       = standard (Cs - Cd) * As + Cd) therefore stays clobbered for
+       the rest of the session.  Any subsequent gsKit prim drawn with
+       ABE = 1 (every font draw, every PolyBlend(TRUE) rect, the menu
+       selection bar, the "SRAM saved." modal, ...) ends up computing
+       output = Cd, which leaves the framebuffer unchanged and makes
+       the entire menu overlay invisible — the visible symptom on the
+       L2+R2 game-exit path is a frozen darkened game frame with no
+       menu UI on top, while audio and input keep responding.  This
+       is the same class of bug PR #60 fixed for FRAME_1 / XYOFFSET_1
+       but in the opposite (game → menu) direction. */
+    p_data = (u64 *)gsKit_heap_alloc(gs, 3, 48, GIF_AD);
     if (!p_data) {
         return;
     }
 
-    *p_data++ = GIF_TAG_AD(2);
+    *p_data++ = GIF_TAG_AD(3);
     *p_data++ = GIF_AD;
     *p_data++ = GS_SETREG_FRAME_1(
         gs->ScreenBuffer[gs->ActiveBuffer & 1] / 8192,
@@ -230,6 +251,10 @@ void GSK_ResetFrame(void)
     *p_data++ = GS_REG_FRAME_1;
     *p_data++ = GS_SETREG_XYOFFSET_1(gs->OffsetX, gs->OffsetY);
     *p_data++ = GS_XYOFFSET_1;
+    /* Standard alpha blend: output = (Cs - Cd) * As + Cd.  Matches the
+       value gsKit_set_primalpha() programmed at GSK_Init() time. */
+    *p_data++ = GS_SETREG_ALPHA(0, 1, 0, 1, 0x80);
+    *p_data++ = GS_REG_ALPHA_1;
 }
 
 void GSK_InvalidateTextureCache(void)
