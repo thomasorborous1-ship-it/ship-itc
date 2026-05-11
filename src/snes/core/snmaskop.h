@@ -38,6 +38,7 @@ static inline void SNMaskClear(SNMaskT *pDest)
     	"sq        $0,0x10(%0)     \n"
     	: 
     	: "r" (pDest)
+        : "memory"
      );    
 }
 
@@ -49,7 +50,7 @@ static inline void SNMaskSet(SNMaskT *pDest)
     	"sq        $8,0x10(%0)     \n"
     	: 
     	: "r" (pDest)
-        : "$8"
+        : "$8", "memory"
      );    
 }
 
@@ -193,7 +194,7 @@ static inline void SNMaskXNOR(SNMaskT *pDest,  const SNMaskT *pSrcA,  const SNMa
     	"sq        $9,0x10(%0)     \n"
     	: 
     	: "r" (pDest), "r" (pSrcA), "r" (pSrcB)
-        : "$8", "$9", "$10", "$11"
+        : "$8", "$9", "$10", "$11", "memory"
      );    
 }
 
@@ -212,6 +213,23 @@ static inline void SNMaskBool(SNMaskT *pDest,  const SNMaskT *pSrc, bool bVal)
 
 #else
 
+/* GCC 15 reorders memory accesses around plain `__asm__ __volatile__`
+ * blocks unless told otherwise. Every one of the asm blocks below writes
+ * to the 32-byte SNMaskT struct pointed to by pDest, but the input is
+ * declared as a plain `"r" (pDest)` and there is no output operand to
+ * tell GCC about the write. Without a `"memory"` clobber, GCC's TBAA
+ * analysis can decide the mask struct hasn't changed and serve stale
+ * cached values to subsequent C reads. GCC 3.2 happened to flush memory
+ * around volatile asm by default; GCC 15 does not. The corruption shows
+ * up as per-scanline BG/sprite mask bleed-through across SNMaskClear /
+ * SNMaskCopy / SNMaskAND / etc., which is exactly the vertical-stripe
+ * pattern visible on the SMW title screen in this codebase.
+ *
+ * Adding `"memory"` to every asm-block clobber list forces GCC to flush
+ * and reload all memory the same way GCC 3.2 used to, restoring the
+ * semantics the original SNESticle source assumed.
+ */
+
 static inline void SNMaskClear(SNMaskT *pDest)
 {
     __asm__ __volatile__ (
@@ -219,6 +237,7 @@ static inline void SNMaskClear(SNMaskT *pDest)
     	"sq        $0,0x10(%0)     \n"
     	: 
     	: "r" (pDest)
+        : "memory"
      );    
 }
 
@@ -230,7 +249,7 @@ static inline void SNMaskSet(SNMaskT *pDest)
     	"sq        $8,0x10(%0)     \n"
     	: 
     	: "r" (pDest)
-        : "$8"
+        : "$8", "memory"
      );    
 
 }
@@ -246,7 +265,7 @@ static inline void SNMaskCopy(SNMaskT *pDest,  const SNMaskT *pSrc)
     	"sq        $9,0x10(%0)     \n"
     	: 
     	: "r" (pDest), "r" (pSrc)
-        : "$8", "$9"
+        : "$8", "$9", "memory"
      );    
 }
 
@@ -265,7 +284,7 @@ static inline void SNMaskNOT(SNMaskT *pDest,  const SNMaskT *pSrc)
     	"sq        $9,0x10(%0)     \n"
     	: 
     	: "r" (pDest), "r" (pSrc)
-        : "$8", "$9"
+        : "$8", "$9", "memory"
      );    
 }
 
@@ -286,7 +305,7 @@ static inline void SNMaskAND(SNMaskT *pDest,  const SNMaskT *pSrcA,  const SNMas
     	"sq        $9,0x10(%0)     \n"
     	: 
     	: "r" (pDest), "r" (pSrcA), "r" (pSrcB)
-        : "$8", "$9", "$10", "$11"
+        : "$8", "$9", "$10", "$11", "memory"
      );    
 }
 
@@ -309,7 +328,7 @@ static inline void SNMaskANDN(SNMaskT *pDest,  const SNMaskT *pSrcA,  const SNMa
     	"sq        $9,0x10(%0)     \n"
     	: 
     	: "r" (pDest), "r" (pSrcA), "r" (pSrcB)
-        : "$8", "$9", "$10", "$11"
+        : "$8", "$9", "$10", "$11", "memory"
      );    
 }
 
@@ -331,7 +350,7 @@ static inline void SNMaskOR(SNMaskT *pDest,  const SNMaskT *pSrcA,  const SNMask
     	"sq        $9,0x10(%0)     \n"
     	: 
     	: "r" (pDest), "r" (pSrcA), "r" (pSrcB)
-        : "$8", "$9", "$10", "$11"
+        : "$8", "$9", "$10", "$11", "memory"
      );    
 }
 
@@ -352,7 +371,7 @@ static inline void SNMaskXOR(SNMaskT *pDest,  const SNMaskT *pSrcA,  const SNMas
     	"sq        $9,0x10(%0)     \n"
     	: 
     	: "r" (pDest), "r" (pSrcA), "r" (pSrcB)
-        : "$8", "$9", "$10", "$11"
+        : "$8", "$9", "$10", "$11", "memory"
      );    
 }
 
@@ -375,7 +394,7 @@ static inline void SNMaskXNOR(SNMaskT *pDest,  const SNMaskT *pSrcA,  const SNMa
     	"sq        $9,0x10(%0)     \n"
     	: 
     	: "r" (pDest), "r" (pSrcA), "r" (pSrcB)
-        : "$8", "$9", "$10", "$11"
+        : "$8", "$9", "$10", "$11", "memory"
      );    
 }
 
