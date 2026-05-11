@@ -123,6 +123,30 @@ void GSK_Init(int width, int height,
         _pGsGlobal->DH     = h;
     }
 
+    /* Re-emit PMODE with the iaddis layout (0xFF61).
+       gsKit_init_screen unconditionally programs PMODE with
+       EN1=0, EN2=1, CRTMD=1, MMOD=0, AMOD=1, SLBG=0, ALP=0x80
+       which yields 0x8046. On NetherSX2 (Patched) and other strict
+       emulators, CRTMD=1 combined with our 256x240 framebuffer
+       layout produces the same vertical-stripe / partial-frame
+       readout artefact that PR #41 fixed pre-gsKit-migration by
+       forcing PMODE=0xFF61 in GS_SetDispMode. The gsKit migration
+       removed the explicit GS_PMODE = 0xFF61 write in gs.c, which
+       silently reintroduced that regression.
+
+       0xFF61 layout: EN1=1, EN2=0, CRTMD=0, MMOD=1, AMOD=1, SLBG=0,
+       ALP=0xFF - i.e. Read Circuit 1 reads DISPFB1 with ALP=255
+       (full opacity on RC1's output), CRTMD=0 (real-PS2-silicon
+       friendly), no SLBG. gsKit sets DISPFB1 and DISPFB2 to the
+       same gsKit-managed framebuffer base, so flipping EN1<->EN2
+       does not change which texels reach the CRTC. */
+    *((volatile u64 *)0x12000000) = 0xFF61ULL; /* PMODE */
+
+    /* COLCLAMP is re-emitted every frame in GSK_ResetFrame (see
+       comment there). The original iaddis pipeline (gs.c) set
+       COLCLAMP=1 as part of GS_SetEnv but gsKit_init_screen does
+       not touch it, so it sits at the GS reset default (0). */
+
     gsKit_set_test (_pGsGlobal, GS_ZTEST_OFF);
     gsKit_set_clamp(_pGsGlobal, GS_CMODE_REPEAT);
     gsKit_set_primalpha(_pGsGlobal,
@@ -200,10 +224,10 @@ void GSK_ResetFrame(void)
 
     gs = _pGsGlobal;
 
-    /* Allocate a three-register A+D GIF tag in gsKit's heap.  The
+    /* Allocate a four-register A+D GIF tag in gsKit's heap.  The
        queue will dispatch it before any subsequent prim, so FRAME_1,
-       XYOFFSET_1 and ALPHA_1 are all refreshed before drawing
-       actually happens.
+       XYOFFSET_1, ALPHA_1 and COLCLAMP are all refreshed before
+       drawing actually happens.
 
        XYOFFSET_1 must be restored here because the SNES per-scanline
        blender (snppublend_gs.cpp) overwrites it on every Exec() call
@@ -236,12 +260,23 @@ void GSK_ResetFrame(void)
        menu UI on top, while audio and input keep responding.  This
        is the same class of bug PR #60 fixed for FRAME_1 / XYOFFSET_1
        but in the opposite (game → menu) direction. */
-    p_data = (u64 *)gsKit_heap_alloc(gs, 3, 48, GIF_AD);
+    /* COLCLAMP = 1 clamps per-channel alpha-blend / colour-math
+       results to 0..255.  The GS reset default is 0 (wrap on
+       overflow); the original iaddis pipeline (gs.c) programmed
+       COLCLAMP = 1 in GS_SetEnv but the gsKit migration dropped
+       that write.  Without it, any final composition draw that
+       saturates a channel (sprite or BG2/BG3 region overlapping
+       BG1 with alpha) ends up wrapping the high bits, which on
+       the visible framebuffer appears as banded/striped corruption
+       in those regions while BG1-only pixels (the borders) stay
+       intact.  Restoring it per-frame here matches the cadence of
+       the FRAME / XYOFFSET / ALPHA restores. */
+    p_data = (u64 *)gsKit_heap_alloc(gs, 4, 64, GIF_AD);
     if (!p_data) {
         return;
     }
 
-    *p_data++ = GIF_TAG_AD(3);
+    *p_data++ = GIF_TAG_AD(4);
     *p_data++ = GIF_AD;
     *p_data++ = GS_SETREG_FRAME_1(
         gs->ScreenBuffer[gs->ActiveBuffer & 1] / 8192,
@@ -255,6 +290,9 @@ void GSK_ResetFrame(void)
        value gsKit_set_primalpha() programmed at GSK_Init() time. */
     *p_data++ = GS_SETREG_ALPHA(0, 1, 0, 1, 0x80);
     *p_data++ = GS_REG_ALPHA_1;
+    /* COLCLAMP = 1 (clamp).  Register 0x46 takes a single bit. */
+    *p_data++ = (u64)1;
+    *p_data++ = (u64)GS_REG_COLCLAMP;
 }
 
 void GSK_InvalidateTextureCache(void)
