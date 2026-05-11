@@ -87,60 +87,34 @@ Int32 SJPCMMixBuffer::GetOutputSamples()
     return nSamples;
 }
 
-static inline Int16 clamp16(Int32 v)
-{
-    if (v >  32767) return  32767;
-    if (v < -32768) return -32768;
-    return (Int16)v;
-}
-
 Int32 SJPCMMixBuffer::ConvertSamples2to3(Int16 *pOut, Int16 *pIn, Int32 nSamples, Int32 *pPrevSample)
 {
-    /*
-     * Cubic Hermite 2:3 upsampler  (32 kHz -> 48 kHz).
-     *
-     * For every 2 input samples we emit 3 output samples.
-     * The output positions in terms of the input grid are:
-     *   out[0] = input position 0        (exact copy of s0)
-     *   out[1] = input position 2/3      (between s0 and s1)
-     *   out[2] = input position 4/3      (= 1/3 between s1 and s2)
-     *
-     * Expanding the Hermite basis with Catmull-Rom tangent
-     * estimates  m_k = (s_{k+1} - s_{k-1}) / 2,  the four-sample
-     * weights reduce to:
-     *
-     *   out[1] = (-1/27)*s_m1 + (9/27)*s0 + (21/27)*s1 + (-2/27)*s2
-     *   out[2] = (-2/27)*s0  + (21/27)*s1 + (9/27)*s2  + (-1/27)*s3
-     *
-     * Coefficients use 12-bit fixed point (shift 12) to stay safely
-     * within 32-bit multiply range on the EE.
-     */
+    Int32 iSample0, iSample1, iSample2;
+    Int32 TwoThird = 0x10000 * 2 / 3;
+    Int32 OneThird = 0x10000  - TwoThird;
     Int16 *pOutStart = pOut;
-    Int32 s_m1 = pPrevSample[0];
 
-    while (nSamples >= 2)
+    iSample0 = *pPrevSample;
+
+    while (nSamples > 0)
     {
-        Int32 s0 = pIn[0];
-        Int32 s1 = pIn[1];
-        Int32 s2 = (nSamples >= 4) ? (Int32)pIn[2] : s1;
-        Int32 s3 = (nSamples >= 6) ? (Int32)pIn[3] : s2;
+        iSample1 = pIn[0];
+        iSample2 = pIn[1];
 
-        pOut[0] = (Int16)s0;
+        pOut[0] = iSample0;
+        pOut[1] = (iSample0 * OneThird + iSample1 * TwoThird) >> 16;
+        pOut[2] = (iSample1 * TwoThird + iSample2 * OneThird) >> 16;
 
-        pOut[1] = clamp16((-152 * s_m1 + 1365 * s0
-                          + 3186 * s1 - 303 * s2) >> 12);
+        iSample0 = iSample2;
 
-        pOut[2] = clamp16((-303 * s0 + 3186 * s1
-                          + 1365 * s2 - 152 * s3) >> 12);
-
-        s_m1 = s1;
-        pIn  += 2;
-        pOut += 3;
-        nSamples -= 2;
+        pIn+=2;
+        pOut+=3;
+        nSamples-=2;
     }
 
-    pPrevSample[0] = s_m1;
-    return (Int32)(pOut - pOutStart);
+    *pPrevSample = iSample0;
+
+    return pOut - pOutStart;
 }
 
 
