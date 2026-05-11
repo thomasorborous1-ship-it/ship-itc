@@ -50,14 +50,19 @@ Int32 SJPCMMixBuffer::GetOutputSamples()
     PROF_ENTER("SjPCM_Available");
 
     /*
-     * nRaw = free 48 kHz stereo frames the IOP ring buffer can
-     * accept.  Capped at 3200 to bound EE CPU load per frame.
-     * For 32 kHz the switch below converts to 32 kHz input count.
+     * Target: keep ~3200 sample-frames buffered in the audsrv ring
+     * (same policy as the original SJPCM2 backend).  Produce only
+     * enough to top up to that level so the DSP runs at a steady
+     * pace and the ring buffer never oscillates between full/empty.
      */
-    nRaw = SjPCM_Available();
-    if (nRaw > 4 * 800) nRaw = 4 * 800;
-    nRaw &= ~3;
-    if (nRaw < 0) nRaw = 0;
+    {
+        Int32 nBuffered = m_bAsync
+                            ? SjPCM_BufferedAsyncGet()
+                            : SjPCM_Buffered();
+        nRaw = 4 * 800 - nBuffered;
+        nRaw &= ~3;
+        if (nRaw < 0) nRaw = 0;
+    }
 
     switch (m_uSampleRate)
     {
@@ -70,7 +75,7 @@ Int32 SJPCMMixBuffer::GetOutputSamples()
     {
         static int __gos = 0;
         if ((__gos & 0x3F) == 0)
-            DLog("[snes-aud] gos f=%d sr=%u avail=%d out=%d async=%d",
+            DLog("[snes-aud] gos f=%d sr=%u topup=%d out=%d async=%d",
                  __gos, (unsigned)m_uSampleRate,
                  (int)nRaw, (int)nSamples, (int)m_bAsync);
         __gos++;
