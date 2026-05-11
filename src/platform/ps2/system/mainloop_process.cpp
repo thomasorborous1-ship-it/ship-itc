@@ -133,7 +133,14 @@ Bool MainLoopProcess()
 		{
 			if (InputIsPadConnected(iPad))
 			{
-				Input.uPad[iPad] = _MainLoopInput(InputGetPadData(iPad));
+				/* OR the digital pad bits with d-pad bits synthesised from
+				   the left analog stick so the analog stick drives the SNES
+				   d-pad in-game (LEFT/RIGHT/UP/DOWN). Digital and analog
+				   inputs are merged: if both press the same direction the
+				   result is identical to a single press, so users can use
+				   whichever they prefer (or both). */
+				Input.uPad[iPad] = _MainLoopInput(InputGetPadData(iPad)
+				                               | InputGetPadDpadFromAnalog(iPad));
 			} else
 			{
 				Input.uPad[iPad] = EMUSYS_DEVICE_DISCONNECTED;

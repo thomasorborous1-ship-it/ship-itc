@@ -34,8 +34,9 @@ Bool   InputIsPadConnected(Uint32 uPad);
 /* Returns digital d-pad bits (PAD_LEFT/RIGHT/UP/DOWN) synthesised from the
    pad's left analog stick deflection. Returns 0 when the stick is inside
    the dead zone, when the pad is disconnected, or when the controller is
-   not running in dualshock mode. Used by the UI/menu code so the analog
-   stick can drive menu navigation without polluting in-game input. */
+   not running in dualshock mode. Callers OR these bits into the digital
+   pad data so the analog stick can drive both menu navigation and the
+   in-game SNES d-pad. */
 Uint32 InputGetPadDpadFromAnalog(Uint32 uPad);
 
 #ifdef __cplusplus
