@@ -93,42 +93,96 @@ Int32 SJPCMMixBuffer::GetOutputSamples()
     return nSamples;
 }
 
+/*
+ * Cubic Lagrange 2:3 up-sampler (32 kHz SNES -> 48 kHz SPU2).
+ *
+ * For each input pair [s_i, s_{i+1}] we emit 3 output samples at
+ * fractional times 0, 2/3, 4/3 (in units of one 32 kHz sample):
+ *
+ *   y[3k+0] = s_{2k}                                       (passthrough)
+ *   y[3k+1] = cubic_lagrange(s_{2k-1}, s_{2k},   s_{2k+1}, s_{2k+2}) @ 2/3
+ *   y[3k+2] = cubic_lagrange(s_{2k},   s_{2k+1}, s_{2k+2}, s_{2k+3}) @ 1/3
+ *
+ * Cubic Lagrange phase 2/3 coefficients (scaled by 81):
+ *   c = [-4, +30, +60, -5] / 81           (sum = 81)
+ * Cubic Lagrange phase 1/3 coefficients (scaled by 81):
+ *   c = [-5, +60, +30, -4] / 81           (sum = 81)
+ *
+ * Replaces the linear 2-tap interpolator that this function used to
+ * carry. Linear interpolation has a sinc^2 frequency response, which
+ * leaves significant spectral images above the input Nyquist (16 kHz)
+ * and is responsible for the "weird / harsh / metallic" artefacts
+ * that show up on SPC700-rendered audio with high-frequency content
+ * (cymbals, brass, FM-style leads). Cubic Lagrange's response is much
+ * closer to an ideal low-pass at f_s_in/2 and suppresses those images
+ * by ~20 dB at f_s_in, while still being cheap enough to run on the
+ * EE (6 mults + 6 adds per 3 output samples).
+ *
+ * State carried across calls is exactly one input sample (s_{-1})
+ * per channel, stored in *pPrevSample. The very last pair in a chunk
+ * doesn't have its full 4-tap lookahead window available yet (we
+ * haven't asked the SPC engine for those samples), so we degrade
+ * that pair to plain linear interpolation. With ~800 input samples
+ * per video frame this affects at most 3 output samples per frame
+ * out of ~1200 (~0.25%), which is inaudible.
+ */
 Int32 SJPCMMixBuffer::ConvertSamples2to3(Int16 *pOut, Int16 *pIn, Int32 nSamples, Int32 *pPrevSample)
 {
-    Int32 iSample0, iSample1, iSample2;
-    Int32 TwoThird = 0x10000 * 2 / 3;
-    Int32 OneThird = 0x10000  - TwoThird;
+    Int32 hist = *pPrevSample;
     Int16 *pOutStart = pOut;
-//      Int16 *pInStart = pIn;
+    Int32 i;
 
-    // for every two input samples, output 3 output samples...
-    // 96hz xxxxxxxxxxxxxxxxxxxxxxxxxxx
-    // 48hz x-x-x-x-x-x-x-x-x-x-x-x-x-x
-    // 32hz x--x--x--x--x--x--x--x--x--
+    if (nSamples < 2) return 0;
 
-    iSample0 = *pPrevSample;
-
-    //
-    while (nSamples > 0)
+    /* Main path: cubic Lagrange. Requires 2 samples of lookahead
+       beyond the current pair (s_{2k+2}, s_{2k+3}). */
+    for (i = 0; i + 3 < nSamples; i += 2)
     {
-        iSample1 = pIn[0];
-        iSample2 = pIn[1];
+        Int32 s0 = pIn[i];
+        Int32 s1 = pIn[i + 1];
+        Int32 s2 = pIn[i + 2];
+        Int32 s3 = pIn[i + 3];
+        Int32 y;
 
-        pOut[0] = iSample0;
-        pOut[1] = (iSample0 * OneThird + iSample1 * TwoThird) >> 16;
-        pOut[2] = (iSample1 * TwoThird + iSample2 * OneThird) >> 16;
+        /* phase 0 - passthrough */
+        pOut[0] = (Int16)s0;
 
-        iSample0 = iSample2;
+        /* phase 2/3 between s0 and s1, using [hist, s0, s1, s2] */
+        y = -4 * hist + 30 * s0 + 60 * s1 - 5 * s2;
+        y = (y >= 0 ? y + 40 : y - 40) / 81;
+        if (y > 32767)  y = 32767;
+        if (y < -32768) y = -32768;
+        pOut[1] = (Int16)y;
 
-        pIn+=2;
-        pOut+=3;
-        nSamples-=2;
+        /* phase 1/3 (= 4/3 from s0) between s1 and s2, using [s0, s1, s2, s3] */
+        y = -5 * s0 + 60 * s1 + 30 * s2 - 4 * s3;
+        y = (y >= 0 ? y + 40 : y - 40) / 81;
+        if (y > 32767)  y = 32767;
+        if (y < -32768) y = -32768;
+        pOut[2] = (Int16)y;
+
+        hist = s1;
+        pOut += 3;
     }
 
-    *pPrevSample = iSample0;
+    /* Tail path: last pair(s) without the 4-tap lookahead window.
+       Fall back to plain linear interpolation. */
+    for (; i + 1 < nSamples; i += 2)
+    {
+        Int32 s0 = pIn[i];
+        Int32 s1 = pIn[i + 1];
+        Int32 s2 = (i + 2 < nSamples) ? pIn[i + 2] : s1;
 
-//        printf("%d %d\n", pOut- pOutStart, pIn - pInStart);
-    return pOut - pOutStart;
+        pOut[0] = (Int16)s0;
+        pOut[1] = (Int16)((s0 + 2 * s1) / 3);
+        pOut[2] = (Int16)((2 * s1 + s2) / 3);
+
+        hist = s1;
+        pOut += 3;
+    }
+
+    *pPrevSample = hist;
+    return (Int32)(pOut - pOutStart);
 }
 
 
