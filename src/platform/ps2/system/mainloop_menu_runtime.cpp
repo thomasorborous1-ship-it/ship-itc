@@ -24,6 +24,7 @@
 #include "mainloop_shared.h"
 #include "mainloop_state.h"
 #include "mainloop_ui.h"
+#include "mainloop_iop.h"
 
 #include "types.h"
 #include "console.h"
@@ -38,6 +39,10 @@ extern "C" {
 
 extern "C" {
 #include "mcsave_ee.h"
+};
+
+extern "C" {
+#include "sjpcm.h"
 };
 
 
@@ -86,7 +91,24 @@ void _MenuEnable(Bool bEnable)
 
 		_bMenu = bEnable;
 
-//    	SjPCM_Clearbuff();
+		/* When the user pops the menu open mid-game (typically via the
+		   L2+R2 combo handled in mainloop_input.cpp) the SNES core is
+		   no longer executed and SJPCMMixBuffer::Flush stops feeding
+		   audsrv. The IOP-side ring buffer, however, still holds up
+		   to ~5120 stereo frames (~107 ms at 48 kHz) of stale samples
+		   and audsrv keeps draining / looping them — audible as a
+		   short loop / drone of the last SNES audio after pressing
+		   L2+R2 to exit to the menu. Drop the queue here so the
+		   transition is silent. Audio resumes automatically when the
+		   user closes the menu: SjPCMMixBuffer::Flush will call
+		   SjPCM_Enqueue again and audsrv plays the new samples.
+		   Gated on _MainLoop_bSjPCMReady for symmetry with the boot
+		   sequence in mainloop_init.cpp (SjPCM_Clearbuff itself is
+		   already a no-op when audsrv failed to initialise). */
+		if (bEnable && _MainLoop_bSjPCMReady)
+		{
+			SjPCM_Clearbuff();
+		}
 	}
 }
 
