@@ -50,20 +50,9 @@ Int32 SJPCMMixBuffer::GetOutputSamples()
     PROF_ENTER("SjPCM_Available");
 
     /*
-     * Ask the audsrv backend how many sample-frames the IOP ring
-     * buffer can accept RIGHT NOW.  This replaces the old formula
-     *     nRaw = 4 * 800 - SjPCM_Buffered();
-     * which assumed the ring buffer held exactly 3200 frames.
-     * audsrv uses a 20480-byte (5120-frame) ring, and
-     * audsrv_queued() can report a non-zero initial occupancy
-     * even before any audio is enqueued, so the old formula
-     * chronically under-produced audio (~424 samples/frame
-     * instead of the ~533 needed at 32 kHz / 60 fps).
-     *
-     * SjPCM_Available() -> audsrv_available() / 4  gives the
-     * real free space.  We cap at 3200 so a single frame never
-     * tries to mix more than the old worst-case, keeping EE CPU
-     * load bounded.
+     * nRaw = free 48 kHz stereo frames the IOP ring buffer can
+     * accept.  Capped at 3200 to bound EE CPU load per frame.
+     * For 32 kHz the switch below converts to 32 kHz input count.
      */
     nRaw = SjPCM_Available();
     if (nRaw > 4 * 800) nRaw = 4 * 800;
@@ -73,13 +62,7 @@ Int32 SJPCMMixBuffer::GetOutputSamples()
     switch (m_uSampleRate)
     {
         case 48000: nSamples = nRaw;                break;
-        /*
-         * audsrv is now configured at 32 kHz (see SJPCM_AUDSRV_FREQ
-         * in src/modules/sjpcm/sjpcm_rpc.c), and audsrv's IOP-side
-         * polyphase upsampler converts 32 kHz -> 48 kHz internally,
-         * so the 32 kHz path is a 1:1 passthrough on the EE.
-         */
-        case 32000: nSamples = nRaw;                break;
+        case 32000: nSamples = (nRaw / 6) * 4;      break;
         case 24000: nSamples = (nRaw / 8) * 4;      break;
         default:    nSamples = 0;                   break;
     }
@@ -99,42 +82,60 @@ Int32 SJPCMMixBuffer::GetOutputSamples()
     return nSamples;
 }
 
+static inline Int16 clamp16(Int32 v)
+{
+    if (v >  32767) return  32767;
+    if (v < -32768) return -32768;
+    return (Int16)v;
+}
+
 Int32 SJPCMMixBuffer::ConvertSamples2to3(Int16 *pOut, Int16 *pIn, Int32 nSamples, Int32 *pPrevSample)
 {
-    Int32 iSample0, iSample1, iSample2;
-    Int32 TwoThird = 0x10000 * 2 / 3;
-    Int32 OneThird = 0x10000  - TwoThird;
+    /*
+     * Cubic Hermite 2:3 upsampler  (32 kHz -> 48 kHz).
+     *
+     * For every 2 input samples we emit 3 output samples.
+     * The output positions in terms of the input grid are:
+     *   out[0] = input position 0        (exact copy of s0)
+     *   out[1] = input position 2/3      (between s0 and s1)
+     *   out[2] = input position 4/3      (= 1/3 between s1 and s2)
+     *
+     * Expanding the Hermite basis with Catmull-Rom tangent
+     * estimates  m_k = (s_{k+1} - s_{k-1}) / 2,  the four-sample
+     * weights reduce to:
+     *
+     *   out[1] = (-1/27)*s_m1 + (9/27)*s0 + (21/27)*s1 + (-2/27)*s2
+     *   out[2] = (-2/27)*s0  + (21/27)*s1 + (9/27)*s2  + (-1/27)*s3
+     *
+     * Coefficients use 12-bit fixed point (shift 12) to stay safely
+     * within 32-bit multiply range on the EE.
+     */
     Int16 *pOutStart = pOut;
-//      Int16 *pInStart = pIn;
+    Int32 s_m1 = pPrevSample[0];
 
-    // for every two input samples, output 3 output samples...
-    // 96hz xxxxxxxxxxxxxxxxxxxxxxxxxxx
-    // 48hz x-x-x-x-x-x-x-x-x-x-x-x-x-x
-    // 32hz x--x--x--x--x--x--x--x--x--
-
-    iSample0 = *pPrevSample;
-
-    //
-    while (nSamples > 0)
+    while (nSamples >= 2)
     {
-        iSample1 = pIn[0];
-        iSample2 = pIn[1];
+        Int32 s0 = pIn[0];
+        Int32 s1 = pIn[1];
+        Int32 s2 = (nSamples >= 4) ? (Int32)pIn[2] : s1;
+        Int32 s3 = (nSamples >= 6) ? (Int32)pIn[3] : s2;
 
-        pOut[0] = iSample0;
-        pOut[1] = (iSample0 * OneThird + iSample1 * TwoThird) >> 16;
-        pOut[2] = (iSample1 * TwoThird + iSample2 * OneThird) >> 16;
+        pOut[0] = (Int16)s0;
 
-        iSample0 = iSample2;
+        pOut[1] = clamp16((-152 * s_m1 + 1365 * s0
+                          + 3186 * s1 - 303 * s2) >> 12);
 
-        pIn+=2;
-        pOut+=3;
-        nSamples-=2;
+        pOut[2] = clamp16((-303 * s0 + 3186 * s1
+                          + 1365 * s2 - 152 * s3) >> 12);
+
+        s_m1 = s1;
+        pIn  += 2;
+        pOut += 3;
+        nSamples -= 2;
     }
 
-    *pPrevSample = iSample0;
-
-//        printf("%d %d\n", pOut- pOutStart, pIn - pInStart);
-    return pOut - pOutStart;
+    pPrevSample[0] = s_m1;
+    return (Int32)(pOut - pOutStart);
 }
 
 
@@ -163,10 +164,10 @@ void SJPCMMixBuffer::OutputSamplesStereo(Int16 *pLeftSamples, Int16 *pRightSampl
         case 24000:
             nOutSamples = nSamples * 2;
             break;
-        default:
         case 32000:
-            /* audsrv handles 32 -> 48 upsample on the IOP side; we
-               just pass through. See SJPCM_AUDSRV_FREQ in sjpcm_rpc.c. */
+            nOutSamples = nSamples * 6 / 4;
+            break;
+        default:
         case 48000:
             nOutSamples = nSamples;
             break;
@@ -195,18 +196,13 @@ void SJPCMMixBuffer::OutputSamplesStereo(Int16 *pLeftSamples, Int16 *pRightSampl
     {
         default:
         case 24000:
-        case 32000:
-            /* audsrv handles 32 -> 48 upsample on the IOP side
-               (see SJPCM_AUDSRV_FREQ in sjpcm_rpc.c), so the 32 kHz
-               path is now a 1:1 passthrough memcpy. The legacy
-               linear 2:3 interpolator (ConvertSamplesStereo_32000)
-               is kept around in case the audsrv backend is ever
-               reconfigured back to 48 kHz. */
         case 48000:
-            // leave data as is
             memcpy(pOutLeft, pLeftSamples, nSamples * sizeof(Int16));
             memcpy(pOutRight, pRightSamples, nSamples * sizeof(Int16));
             m_nOutSamples += nSamples;
+            break;
+        case 32000:
+            m_nOutSamples += ConvertSamplesStereo_32000(pLeftSamples, pRightSamples, pOutLeft, pOutRight, nSamples);
             break;
     }
 }

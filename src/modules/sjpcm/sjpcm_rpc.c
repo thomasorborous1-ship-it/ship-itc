@@ -104,27 +104,12 @@ void DLog(const char *fmt, ...)
 
 
 /*
-    Output is now 32000 Hz / 16 bit / stereo, the SNES APU's native
-    sample rate. audsrv has a built-in polyphase upsampler from 32 kHz
-    to the SPU2's native 48 kHz (up_32000_16_stereo + up_32000_lut in
-    $(PS2SDK)/iop/sound/audsrv/src/upsamplers.c), so we ship the SNES
-    output as-is and let audsrv handle the rate conversion with its
-    LUT-based filter instead of the linear 2:3 interpolator we used
-    to run on the EE.
-
-    Why: the EE-side ConvertSamples2to3() in sjpcmbuffer.cpp is a
-    very simple linear interpolator and reports of "torn / harsh"
-    audio on NetherSX2 line up with the kind of aliasing artefacts a
-    linear upsampler will introduce on high-energy SPC content.
-    audsrv's LUT-based upsampler is well-exercised by every other
-    PS2 homebrew that uses it (PicoDrive, ScummVM, SDL_audio, etc.)
-    and is the recommended path for non-48k input.
-
-    SJPCMMixBuffer is taught to treat 32000 as a 1:1 passthrough
-    case (see src/common/render/sjpcmbuffer.cpp), so EE-side
-    upsampling is skipped entirely.
+    Feed audsrv at SPU2's native 48 kHz so it runs in pure
+    passthrough / demux mode (up_48000_16_stereo).  The EE-side
+    cubic Hermite upsampler in sjpcmbuffer.cpp handles the 32 -> 48
+    conversion before the data reaches audsrv.
 */
-#define SJPCM_AUDSRV_FREQ      32000
+#define SJPCM_AUDSRV_FREQ      48000
 #define SJPCM_AUDSRV_BITS      16
 #define SJPCM_AUDSRV_CHANNELS  2
 #define SJPCM_BYTES_PER_SAMPLE (SJPCM_AUDSRV_CHANNELS * (SJPCM_AUDSRV_BITS / 8)) /* 4 */
@@ -173,7 +158,8 @@ int SjPCM_Init(int sync, int numsamples, int maxenqueuesamples)
     fmt.channels = SJPCM_AUDSRV_CHANNELS;
 
     ret = audsrv_set_format(&fmt);
-    DLog("[snes-aud] set_format(48000,16,2) = %d", ret);
+    DLog("[snes-aud] set_format(%d,%d,%d) = %d",
+         SJPCM_AUDSRV_FREQ, SJPCM_AUDSRV_BITS, SJPCM_AUDSRV_CHANNELS, ret);
     if (ret != 0)
     {
         DLog("[snes-aud] set_format FAILED %d (%s)",
