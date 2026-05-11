@@ -50,19 +50,25 @@ Int32 SJPCMMixBuffer::GetOutputSamples()
     PROF_ENTER("SjPCM_Available");
 
     /*
-     * Target: keep ~3200 sample-frames buffered in the audsrv ring
-     * (same policy as the original SJPCM2 backend).  Produce only
-     * enough to top up to that level so the DSP runs at a steady
-     * pace and the ring buffer never oscillates between full/empty.
+     * Ask the audsrv backend how many sample-frames the IOP ring
+     * buffer can accept RIGHT NOW.  This replaces the old formula
+     *     nRaw = 4 * 800 - SjPCM_Buffered();
+     * which assumed the ring buffer held exactly 3200 frames.
+     * audsrv uses a 20480-byte (5120-frame) ring, and
+     * audsrv_queued() can report a non-zero initial occupancy
+     * even before any audio is enqueued, so the old formula
+     * chronically under-produced audio (~424 samples/frame
+     * instead of the ~533 needed at 32 kHz / 60 fps).
+     *
+     * SjPCM_Available() -> audsrv_available() / 4  gives the
+     * real free space.  We cap at 3200 so a single frame never
+     * tries to mix more than the old worst-case, keeping EE CPU
+     * load bounded.
      */
-    {
-        Int32 nBuffered = m_bAsync
-                            ? SjPCM_BufferedAsyncGet()
-                            : SjPCM_Buffered();
-        nRaw = 4 * 800 - nBuffered;
-        nRaw &= ~3;
-        if (nRaw < 0) nRaw = 0;
-    }
+    nRaw = SjPCM_Available();
+    if (nRaw > 4 * 800) nRaw = 4 * 800;
+    nRaw &= ~3;
+    if (nRaw < 0) nRaw = 0;
 
     switch (m_uSampleRate)
     {
@@ -75,7 +81,7 @@ Int32 SJPCMMixBuffer::GetOutputSamples()
     {
         static int __gos = 0;
         if ((__gos & 0x3F) == 0)
-            DLog("[snes-aud] gos f=%d sr=%u topup=%d out=%d async=%d",
+            DLog("[snes-aud] gos f=%d sr=%u avail=%d out=%d async=%d",
                  __gos, (unsigned)m_uSampleRate,
                  (int)nRaw, (int)nSamples, (int)m_bAsync);
         __gos++;
@@ -93,9 +99,16 @@ Int32 SJPCMMixBuffer::ConvertSamples2to3(Int16 *pOut, Int16 *pIn, Int32 nSamples
     Int32 TwoThird = 0x10000 * 2 / 3;
     Int32 OneThird = 0x10000  - TwoThird;
     Int16 *pOutStart = pOut;
+//      Int16 *pInStart = pIn;
+
+    // for every two input samples, output 3 output samples...
+    // 96hz xxxxxxxxxxxxxxxxxxxxxxxxxxx
+    // 48hz x-x-x-x-x-x-x-x-x-x-x-x-x-x
+    // 32hz x--x--x--x--x--x--x--x--x--
 
     iSample0 = *pPrevSample;
 
+    //
     while (nSamples > 0)
     {
         iSample1 = pIn[0];
@@ -114,6 +127,7 @@ Int32 SJPCMMixBuffer::ConvertSamples2to3(Int16 *pOut, Int16 *pIn, Int32 nSamples
 
     *pPrevSample = iSample0;
 
+//        printf("%d %d\n", pOut- pOutStart, pIn - pInStart);
     return pOut - pOutStart;
 }
 
@@ -173,15 +187,17 @@ void SJPCMMixBuffer::OutputSamplesStereo(Int16 *pLeftSamples, Int16 *pRightSampl
 
     switch(m_uSampleRate)
     {
+        case 32000:
+            m_nOutSamples += ConvertSamplesStereo_32000(pLeftSamples, pRightSamples, pOutLeft, pOutRight, nSamples);
+            break;
+
         default:
         case 24000:
         case 48000:
+            // leave data as is
             memcpy(pOutLeft, pLeftSamples, nSamples * sizeof(Int16));
             memcpy(pOutRight, pRightSamples, nSamples * sizeof(Int16));
             m_nOutSamples += nSamples;
-            break;
-        case 32000:
-            m_nOutSamples += ConvertSamplesStereo_32000(pLeftSamples, pRightSamples, pOutLeft, pOutRight, nSamples);
             break;
     }
 }

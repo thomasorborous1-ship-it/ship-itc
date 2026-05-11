@@ -104,10 +104,10 @@ void DLog(const char *fmt, ...)
 
 
 /*
-    Feed audsrv at SPU2's native 48 kHz so it runs in pure
-    passthrough / demux mode (up_48000_16_stereo).  The EE-side
-    linear 2:3 upsampler in sjpcmbuffer.cpp handles the 32 -> 48
-    conversion before the data reaches audsrv.
+    Output is fixed 48000 Hz / 16 bit / stereo (SPU2 native).
+    SJPCMMixBuffer already up-samples 32000 Hz SNES audio to 48000 Hz
+    before calling SjPCM_Enqueue, so audsrv runs without any internal
+    upsampling.
 */
 #define SJPCM_AUDSRV_FREQ      48000
 #define SJPCM_AUDSRV_BITS      16
@@ -158,8 +158,7 @@ int SjPCM_Init(int sync, int numsamples, int maxenqueuesamples)
     fmt.channels = SJPCM_AUDSRV_CHANNELS;
 
     ret = audsrv_set_format(&fmt);
-    DLog("[snes-aud] set_format(%d,%d,%d) = %d",
-         SJPCM_AUDSRV_FREQ, SJPCM_AUDSRV_BITS, SJPCM_AUDSRV_CHANNELS, ret);
+    DLog("[snes-aud] set_format(48000,16,2) = %d", ret);
     if (ret != 0)
     {
         DLog("[snes-aud] set_format FAILED %d (%s)",
