@@ -29,12 +29,37 @@ DEBUG_BOOT_SCREEN ?= 0
 # broken). Override on the make line: `make MAINLOOP_DEBUG_GS_TEST=1`.
 MAINLOOP_DEBUG_GS_TEST ?= 0
 
-CFLAGS := -G0 -O2 -Wall -fno-strict-aliasing \
+# Conservative flags to bridge the GCC 3.2 (2003) -> GCC 15.1 (2025)
+# gap in default optimization behavior. The original iaddis source was
+# written assuming the older compiler's much more conservative defaults,
+# so several modern auto-optimizations break hand-rolled GIF chains,
+# DMA setup and pointer arithmetic in src/platform/ps2/gs/* and
+# src/snes/ppu/snppublend_gs.cpp. Documented per flag:
+#   -fno-tree-vectorize:                    no auto-SIMD of 256-wide blender loops
+#   -fno-aggressive-loop-optimizations:     keep loops the source actually wrote
+#   -fno-tree-pre:                          no PRE hoisting loads across DMA barriers
+#   -fno-tree-loop-distribute-patterns:     no substituting memcpy/memset for raw loops
+#   -fno-delete-null-pointer-checks:        keep null guards even when GCC "proves" non-null
+#   -fno-isolate-erroneous-paths-dereference: keep "impossible" deref paths so DMA RPC works
+#   -fwrapv:                                signed overflow = wrap (defined), not UB
+#   -fsigned-char:                          char is signed (PS2-era assumption)
+CONSERVATIVE_FLAGS := \
+	-fno-strict-aliasing \
+	-fno-tree-vectorize \
+	-fno-aggressive-loop-optimizations \
+	-fno-tree-pre \
+	-fno-tree-loop-distribute-patterns \
+	-fno-delete-null-pointer-checks \
+	-fno-isolate-erroneous-paths-dereference \
+	-fwrapv \
+	-fsigned-char
+
+CFLAGS := -G0 -O2 -Wall $(CONSERVATIVE_FLAGS) \
 	-D_EE -DPS2 -DLSB_FIRST -DALIGN_DWORD -DCODE_PLATFORM=3 \
 	-DDEBUG_BOOT_SCREEN=$(DEBUG_BOOT_SCREEN) \
 	-DMAINLOOP_DEBUG_GS_TEST=$(MAINLOOP_DEBUG_GS_TEST)
 
-CXXFLAGS := -G0 -O2 -Wall -fno-strict-aliasing -Wno-narrowing -Wno-overflow -fno-exceptions -fno-rtti -fpermissive \
+CXXFLAGS := -G0 -O2 -Wall $(CONSERVATIVE_FLAGS) -Wno-narrowing -Wno-overflow -fno-exceptions -fno-rtti -fpermissive \
 	-D_EE -DPS2 -DLSB_FIRST -DALIGN_DWORD -DCODE_PLATFORM=3 \
 	-DDEBUG_BOOT_SCREEN=$(DEBUG_BOOT_SCREEN) \
 	-DMAINLOOP_DEBUG_GS_TEST=$(MAINLOOP_DEBUG_GS_TEST)
