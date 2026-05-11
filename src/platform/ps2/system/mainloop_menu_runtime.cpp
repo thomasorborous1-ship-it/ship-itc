@@ -54,6 +54,26 @@ void _MenuEnable(Bool bEnable)
 {
 	if (bEnable!=_bMenu)
 	{
+		/* Mute audsrv BEFORE the SRAM save block below runs.
+		   MainLoopModalPrintf() (see mainloop_ui.cpp) spins
+		   MainLoopRender() inline for N frames and MCSave_WriteSync()
+		   also blocks the EE for the duration of the memcard write,
+		   so the SNES core is starved of CPU and stops feeding
+		   audsrv. The IOP-side play_thread keeps running, drains the
+		   legitimate ~107 ms tail, and then re-reads stale samples
+		   from the same ring buffer region — audible as a drone of
+		   the last SNES audio for the full duration of the
+		   "Saving SRAM..." / "SRAM saved.\n" / "Error Saving SRAM!\n"
+		   modals (~1 - 1.5 s). Muting here, before any of those
+		   blocking calls, silences both the legitimate tail and the
+		   drone. The matching unmute on menu exit is at the bottom
+		   of this function. See the unmute comment for why we mute
+		   via SjPCM_Setvol rather than SjPCM_Clearbuff. */
+		if (bEnable && _MainLoop_bSjPCMReady)
+		{
+			SjPCM_Setvol(0);
+		}
+
 		// if menu is enabled, then attempt to save sram immediately
 		if (bEnable)
 		{
@@ -91,20 +111,15 @@ void _MenuEnable(Bool bEnable)
 
 		_bMenu = bEnable;
 
-		/* Silence (and restore) the audsrv output when the in-game
-		   menu is opened / dismissed (typically via the L2+R2 combo
-		   handled in mainloop_input.cpp). The SNES core stops being
-		   executed while the menu is up so SJPCMMixBuffer::Flush no
-		   longer feeds audsrv, but the IOP-side play_thread is always
-		   running: once the legitimate ~5120 stereo frames (~107 ms
-		   at 48 kHz) drain it keeps reading the same ring buffer
-		   region over and over, audible as a short drone / loop of
-		   the last SNES audio.
+		/* Restore audsrv output when leaving the menu. The entry-side
+		   mute happens at the top of this function (above the SRAM
+		   save block) so the modal-printf loops there also play
+		   silent; we only handle the leave side here.
 
 		   We mute via SjPCM_Setvol(0) rather than SjPCM_Clearbuff
 		   (audsrv_stop_audio) because the latter sets audsrv's
-		   `playing` flag to 0, which freezes the IOP-side readpos and
-		   writepos and prevents audsrv_available() from ever
+		   `playing` flag to 0, which freezes the IOP-side readpos
+		   and writepos and prevents audsrv_available() from ever
 		   advancing. The next SjPCM_Enqueue(...,wait=1) issued by
 		   SJPCMMixBuffer::Flush after the menu is dismissed then
 		   deadlocks inside audsrv_wait_audio, which is what made the
@@ -116,9 +131,9 @@ void _MenuEnable(Bool bEnable)
 		   SjPCM_Setvol scale (rescaled to audsrv's MAX_VOLUME). Gated
 		   on _MainLoop_bSjPCMReady for symmetry with the boot
 		   sequence in mainloop_init.cpp. */
-		if (_MainLoop_bSjPCMReady)
+		if (!bEnable && _MainLoop_bSjPCMReady)
 		{
-			SjPCM_Setvol(bEnable ? 0 : 0x3FFF);
+			SjPCM_Setvol(0x3FFF);
 		}
 	}
 }
