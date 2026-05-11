@@ -73,7 +73,13 @@ Int32 SJPCMMixBuffer::GetOutputSamples()
     switch (m_uSampleRate)
     {
         case 48000: nSamples = nRaw;                break;
-        case 32000: nSamples = (nRaw / 6) * 4;      break;
+        /*
+         * audsrv is now configured at 32 kHz (see SJPCM_AUDSRV_FREQ
+         * in src/modules/sjpcm/sjpcm_rpc.c), and audsrv's IOP-side
+         * polyphase upsampler converts 32 kHz -> 48 kHz internally,
+         * so the 32 kHz path is a 1:1 passthrough on the EE.
+         */
+        case 32000: nSamples = nRaw;                break;
         case 24000: nSamples = (nRaw / 8) * 4;      break;
         default:    nSamples = 0;                   break;
     }
@@ -157,10 +163,10 @@ void SJPCMMixBuffer::OutputSamplesStereo(Int16 *pLeftSamples, Int16 *pRightSampl
         case 24000:
             nOutSamples = nSamples * 2;
             break;
-        case 32000:
-            nOutSamples = nSamples * 6 / 4;
-            break;
         default:
+        case 32000:
+            /* audsrv handles 32 -> 48 upsample on the IOP side; we
+               just pass through. See SJPCM_AUDSRV_FREQ in sjpcm_rpc.c. */
         case 48000:
             nOutSamples = nSamples;
             break;
@@ -187,12 +193,15 @@ void SJPCMMixBuffer::OutputSamplesStereo(Int16 *pLeftSamples, Int16 *pRightSampl
 
     switch(m_uSampleRate)
     {
-        case 32000:
-            m_nOutSamples += ConvertSamplesStereo_32000(pLeftSamples, pRightSamples, pOutLeft, pOutRight, nSamples);
-            break;
-
         default:
         case 24000:
+        case 32000:
+            /* audsrv handles 32 -> 48 upsample on the IOP side
+               (see SJPCM_AUDSRV_FREQ in sjpcm_rpc.c), so the 32 kHz
+               path is now a 1:1 passthrough memcpy. The legacy
+               linear 2:3 interpolator (ConvertSamplesStereo_32000)
+               is kept around in case the audsrv backend is ever
+               reconfigured back to 48 kHz. */
         case 48000:
             // leave data as is
             memcpy(pOutLeft, pLeftSamples, nSamples * sizeof(Int16));
