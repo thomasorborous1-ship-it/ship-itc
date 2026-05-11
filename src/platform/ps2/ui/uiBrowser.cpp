@@ -582,6 +582,50 @@ void CBrowserScreen::SetDir(const Char *pDir)
 				
 		 	// printf("fioClose: %s %d\n", pDir, fd);
 			fioDclose(fd);
+
+			/* Cross-check every BROWSER_ENTRYTYPE_DIR entry by
+			   actually trying to fioDopen it. The iaddis CDVD.IRX
+			   intermittently leaks the SUBDIR attr bit into entries
+			   that are regular files on the underlying medium (the
+			   defensive memset + PS2MEM_UNCACHED reads above
+			   mitigate but do not eliminate the symptom; on real
+			   hardware files such as MCSAVE.IRX, NETPLAY.IRX and
+			   SYSTEM.CNF still come back marked as directories).
+			   We can only do this AFTER fioDclose-ing the parent
+			   handle: the iaddis CDVD IRX keeps a single global
+			   _CDVD_pCurrentOpenDir slot and rejects a second
+			   CDVD_dopen while another dir is still open. Entries
+			   that refuse to open as a directory get reclassified
+			   the same way regular files are - EXECUTABLE if the
+			   extension is on the ROM list, OTHER otherwise. */
+			for (Int32 i = 0; i < m_nEntries; i++)
+			{
+				BrowserEntryT *pEntry = &m_pDirEntries[i];
+				Char childPath[1024];
+				int childFd;
+				BrowserEntryTypeE eType;
+
+				if (pEntry->eType != BROWSER_ENTRYTYPE_DIR)
+					continue;
+
+				snprintf(childPath, sizeof(childPath), "%s%s/",
+				         m_Dir, pEntry->name);
+
+				childFd = fioDopen(childPath);
+				if (childFd >= 0)
+				{
+					/* Confirmed real directory. */
+					fioDclose(childFd);
+					continue;
+				}
+
+				/* False positive: reclassify like a file. */
+				eType = (BrowserEntryTypeE)SendMessage(2, 0,
+				                                      (void *)pEntry->name);
+				if (eType != BROWSER_ENTRYTYPE_EXECUTABLE)
+					eType = BROWSER_ENTRYTYPE_OTHER;
+				pEntry->eType = eType;
+			}
 		}
 	} else
 	{
