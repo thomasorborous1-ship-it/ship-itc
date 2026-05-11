@@ -185,28 +185,24 @@ dispx = MAINLOOP_DISPX;
 BOOTLOG("[boot] GS_SetEnv()\n");
 	GS_SetEnv(MAINLOOP_SCREENWIDTH, MAINLOOP_SCREENHEIGHT, FB0, FB1, GS_PSMCT32, Z0, GS_PSMZ16S);
 
-	/* Reserve the SNES output texture and the blender scratchpad
-	   through gsKit's VRAM allocator so the addresses live in the
-	   same arena gsKit picked for FB0/FB1. The output region is
-	   shared between _OutTex (sampled by MainLoopRender) and the
-	   blender's render-to-texture target, so they must come from the
-	   same allocation. The blender slab needs 0x300 TBP units to fit
-	   palette / input planes / attribute clut / temp at its hard-coded
-	   offsets (Pal=+0x000, Input=+0x080, AttribMainPal=+0x180,
-	   AttribSubPal=+0x184, Temp=+0x200). */
-	_MainLoop_uOutTexTBP  = GSK_VramAllocTBP(256 * 256 * 4);
-	_MainLoop_uBlenderTBP = GSK_VramAllocTBP(0x300 * 256);
-	if (_MainLoop_uOutTexTBP == 0 || _MainLoop_uBlenderTBP == 0)
-	{
-		/* gsKit allocator refused. Fall back to the legacy hard-coded
-		   layout so the boot still proceeds; this matches the pre-Fase
-		   1A behaviour exactly. */
-		printf("[boot] GSK_VramAllocTBP failed (out=%u blend=%u), falling back to legacy layout\n",
-			_MainLoop_uOutTexTBP, _MainLoop_uBlenderTBP);
-		_MainLoop_uOutTexTBP  = TEXADDR;
-		_MainLoop_uBlenderTBP = 0x3C00;
-	}
-	printf("[boot] _OutTex TBP=0x%04X, Blender TBP=0x%04X\n",
+	/* Use the legacy hard-coded VRAM layout that matches the iaddis
+	   original SNESticle ELF (which renders correctly on real PS2 and
+	   on NetherSX2). The previous gsKit-allocator path was the only
+	   non-cosmetic divergence between iaddis's source and HEAD in the
+	   PS2 render pipeline: gsKit_vram_alloc returns addresses *after*
+	   its internal FB0/FB1/Z allocations, with its own padding and
+	   alignment rules, so the returned TBPs would not match the
+	   pre-Fase-1A layout (TEXADDR=0x2400, blender=0x3C00) that the
+	   SNESticle blender was originally tuned against, and on the
+	   PS2's GS the blender per-scanline writes would land in regions
+	   that happened to alias FB0/FB1/Z0/font memory depending on the
+	   gsKit version - producing the vertical-stripe tile corruption
+	   visible on the SMW title screen since the very first successful
+	   boot. Hard-coding to TEXADDR/0x3C00 reproduces iaddis's exact
+	   working layout. */
+	_MainLoop_uOutTexTBP  = TEXADDR;
+	_MainLoop_uBlenderTBP = 0x3C00;
+	printf("[boot] _OutTex TBP=0x%04X, Blender TBP=0x%04X (legacy layout)\n",
 		(unsigned)_MainLoop_uOutTexTBP, (unsigned)_MainLoop_uBlenderTBP);
 
 GPFifoInit((Uint128 *)_MainLoop_GfxPipe, sizeof(_MainLoop_GfxPipe));
