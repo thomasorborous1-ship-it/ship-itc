@@ -106,7 +106,7 @@ void DLog(const char *fmt, ...)
 /*
     Feed audsrv at SPU2's native 48 kHz so it runs in pure
     passthrough / demux mode (up_48000_16_stereo).  The EE-side
-    cubic Hermite upsampler in sjpcmbuffer.cpp handles the 32 -> 48
+    linear 2:3 upsampler in sjpcmbuffer.cpp handles the 32 -> 48
     conversion before the data reaches audsrv.
 */
 #define SJPCM_AUDSRV_FREQ      48000
