@@ -21,12 +21,13 @@ int MemCardCreateSave(char *pDir, char *pTitle, Bool bForceWrite)
 	char* icon_buffer;
 	mcIcon icon_sys;
 	char Path[256];
+	int mkRet;
 
 	static iconIVECTOR bgcolor[4] = {
-		{  68,  23, 116,  0 }, // top left
-		{ 255, 255, 255,  0 }, // top right
-		{ 255, 255, 255,  0 }, // bottom left
-		{  68,  23, 116,  0 }, // bottom right
+		{  68,  23, 116,  0 },
+		{ 255, 255, 255,  0 },
+		{ 255, 255, 255,  0 },
+		{  68,  23, 116,  0 },
 	};
 
 	static iconFVECTOR lightdir[3] = {
@@ -43,51 +44,61 @@ int MemCardCreateSave(char *pDir, char *pTitle, Bool bForceWrite)
 
 	static iconFVECTOR ambient = { 0.50, 0.50, 0.50, 0.00 };
 
-	if(fioMkdir(pDir) < 0)
+	printf("MemCard: CreateSave('%s', '%s', force=%d) init=%d\n",
+	       pDir, pTitle, (int)bForceWrite, (int)_MemCard_bInitialized);
+
+	if (!_MemCard_bInitialized)
+	{
+		printf("MemCard: CreateSave bail (mc not initialized)\n");
+		return -1;
+	}
+
+	mkRet = fioMkdir(pDir);
+	printf("MemCard: fioMkdir('%s') -> %d\n", pDir, mkRet);
+
+	if (mkRet < 0)
 	{
 		if (!bForceWrite)
 		{
+			printf("MemCard: CreateSave bail (mkdir failed, no force)\n");
 		 	return -1;
 		}
 	}
 
-	// Set up icon.sys. This is the file which controls how our memory card save looks
-	// in the PS2 browser screen. It contains info on the bg colour, lighting, save name
-	// and icon filenames. Please note that the save name is sjis encoded.
-
 	memset(&icon_sys, 0, sizeof(mcIcon));
 	strcpy((char *)icon_sys.head, "PS2D");
-#ifdef _EE	
+#ifdef _EE
 	strcpy((char*)&icon_sys.title, (const char*)pTitle);
 #else
 	strcpy_sjis((short *)&icon_sys.title, pTitle);
-#endif	
+#endif
 	icon_sys.nlOffset = 16;
 	icon_sys.trans = 0x60;
 	memcpy(icon_sys.bgCol, bgcolor, sizeof(bgcolor));
 	memcpy(icon_sys.lightDir, lightdir, sizeof(lightdir));
 	memcpy(icon_sys.lightCol, lightcol, sizeof(lightcol));
 	memcpy(icon_sys.lightAmbient, ambient, sizeof(ambient));
-	strcpy((char *)icon_sys.view, "icon.icn"); // these filenames are relative to the directory
-	strcpy((char *)icon_sys.copy, "icon.icn"); // in which icon.sys resides.
+	strcpy((char *)icon_sys.view, "icon.icn");
+	strcpy((char *)icon_sys.copy, "icon.icn");
 	strcpy((char *)icon_sys.del, "icon.icn");
 
-	// Write icon.sys to the memory card (Note that this filename is fixed)
 	sprintf(Path, "%s/icon.sys", pDir);
 	if (!MemCardWriteFile(Path, (Uint8 *)&icon_sys, sizeof(icon_sys)))
 	{
+		printf("MemCard: icon.sys write failed\n");
 		return -5;
 	}
 
-	// get pointer to icon data
 	icon_size = sizeof(_MemCard_IconData);
 	icon_buffer = (char *)_MemCard_IconData;
 
 	sprintf(Path, "%s/icon.icn", pDir);
 	if (!MemCardWriteFile(Path, (Uint8 *)icon_buffer, icon_size))
 	{
+		printf("MemCard: icon.icn write failed\n");
 		return -6;
 	}
+	printf("MemCard: CreateSave OK\n");
 	return 0;
 }
 
@@ -98,22 +109,15 @@ Bool MemCardCheckNewCard()
 
 	if (!_MemCard_bInitialized) return FALSE;
 
-	// get MC info
 	mcGetInfo(0,0,&mc_Type,&mc_Free,&mc_Format);
 	mcSync(0, NULL, &ret);
+	printf("MemCard: mcGetInfo -> ret=%d type=%d free=%d fmt=%d\n",
+	       ret, mc_Type, mc_Free, mc_Format);
 
-	#if 0
-	printf("mcGetInfo returned %d\n",ret);
-	printf("Type: %d Free: %d Format: %d\n\n", mc_Type, mc_Free, mc_Format);
-	#endif
-
-	// new formatted card inserted	
 	if (ret == -1)
 	{
-		// get MC info (again)
 		mcGetInfo(0,0,&mc_Type,&mc_Free,&mc_Format);
 		mcSync(0, NULL, &ret);
-
 		return TRUE;
 	}
 	return FALSE;
@@ -121,7 +125,9 @@ Bool MemCardCheckNewCard()
 
 void MemCardInit()
 {
-	if(mcInit(MC_TYPE_MC) < 0) {
+	int rc = mcInit(MC_TYPE_MC);
+	printf("MemCard: mcInit -> %d\n", rc);
+	if (rc < 0) {
 		printf("MemCard: Failed to initialise memcard server!\n");
 	} else
 	{
@@ -134,15 +140,20 @@ Bool MemCardWriteFile(char *pPath, Uint8 *pData, Uint32 nBytes)
 {
 	int fd;
 
-	if (!_MemCard_bInitialized) return FALSE;
+	if (!_MemCard_bInitialized)
+	{
+		printf("MemCard: Write skipped (not init): %s\n", pPath);
+		return FALSE;
+	}
 
 	fd = fioOpen(pPath, O_WRONLY | O_CREAT);
+	printf("MemCard: fioOpen-W('%s') -> %d\n", pPath, fd);
 	if (fd > 0)
 	{
 		unsigned int result;
 		result = fioWrite(fd, pData, nBytes);
 		fioClose(fd);
-		printf("MemCard: Write %s (%d)\n", pPath, result);
+		printf("MemCard: fioWrite('%s') %u/%u\n", pPath, result, (unsigned)nBytes);
 		return (result == nBytes);
 	}
 	return FALSE;
@@ -165,6 +176,3 @@ Bool MemCardReadFile(char *pPath, Uint8 *pData, Uint32 nBytes)
 	}
 	return FALSE;
 }
-
-
-
