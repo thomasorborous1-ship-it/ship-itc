@@ -782,23 +782,18 @@ static void _RenderBGData_O(Uint8 *pLine8, Uint8 *pSrc8, SNMaskT *pBGMask, Uint3
 		pMaskData++;
 
 		// write 0 to output
-		__asm__ (
+		__asm__ __volatile__ (
 			"sq        $0,0x00(%0)     \n"
-			: : "r" (pLine8)
+			:
+			: "r" (pLine8)
+			: "memory"
 			);    
 
 		if (uMask)
 		{
-			Uint128 uSrc0, uSrc1;
-
-			__asm__ (
-				"lq        %0,0x00(%2)     \n"
-				"lq        %1,0x10(%2)     \n"
-				"qfsrv     %0,%1,%0       \n"
-				: "=r" (uSrc0),"=r" (uSrc1)
-				: "r" (pSrc8)
-				);    
-
+			/* GCC 15 r5900 TI-mode split: keep 128-bit value in fixed
+			 * MMI register and emit `sq` inside asm block (snmaskop.h
+			 * pattern). C-level Uint128 store would only emit 1 sd. */
 			if (uMask!=0xFFFF)
 			{
 				Uint64 uMask0,uMask1;
@@ -806,16 +801,31 @@ static void _RenderBGData_O(Uint8 *pLine8, Uint8 *pSrc8, SNMaskT *pBGMask, Uint3
 				uMask0 = (*pLookup64)[uMask & 0xFF];
 				uMask1 = (*pLookup64)[uMask >> 8];
 
-				__asm__ (
-					"pcpyld     %0,%1,%0        \n" // combine mask0, mask1
-					"pceqb      %0,%0,$0        \n"
-					"por        %2,%2,%0        \n" // uSrc0   |= uMask0;
-					"pxor       %2,%2,%0        \n" // uSrc0   ^= uMask0;
-					: "+r" (uMask0), "+r" (uMask1), "+r" (uSrc0)
-					);    
+				__asm__ __volatile__ (
+					"lq         $8, 0x00(%2)     \n"
+					"lq         $9, 0x10(%2)     \n"
+					"qfsrv      $8, $9, $8       \n"
+					"pcpyld     $10, %1, %0      \n"
+					"pceqb      $10, $10, $0     \n"
+					"por        $8, $8, $10      \n"
+					"pxor       $8, $8, $10      \n"
+					"sq         $8, 0x00(%3)     \n"
+					:
+					: "r" (uMask0), "r" (uMask1), "r" (pSrc8), "r" (pLine8)
+					: "$8", "$9", "$10", "memory"
+					);
+			} else
+			{
+				__asm__ __volatile__ (
+					"lq         $8, 0x00(%0)     \n"
+					"lq         $9, 0x10(%0)     \n"
+					"qfsrv      $8, $9, $8       \n"
+					"sq         $8, 0x00(%1)     \n"
+					:
+					: "r" (pSrc8), "r" (pLine8)
+					: "$8", "$9", "memory"
+					);
 			}
-
-			((Uint128 *)pLine8)[0] = uSrc0; 
 		}
 
 		pSrc8+=16;
@@ -847,40 +857,42 @@ static void _RenderBGData(Uint8 *pLine8, Uint8 *pSrc8, SNMaskT *pBGMask, Uint32 
 
 		if (uMask)
 		{
-			Uint128 uSrc0, uSrc1;
-
-    	    __asm__ (
-    	        "lq        %0,0x00(%2)     \n"
-    	        "lq        %1,0x10(%2)     \n"
-    	        "qfsrv     %0,%1,%0       \n"
-    	        : "=r" (uSrc0),"=r" (uSrc1)
-    	        : "r" (pSrc8)
-    	     );    
-
+			/* GCC 15 r5900 TI-mode split: see _RenderBGData_O above. */
 			if (uMask!=0xFFFF)
 			{
                 Uint64 uMask0,uMask1;
-                Uint128 uDest0;
 
                 uMask0 = (*pLookup64)[uMask & 0xFF];
                 uMask1 = (*pLookup64)[uMask >> 8];
 
-    	        __asm__ (
-        	        "lq         %3,0x00(%4)     \n" // load uDest0
-                    "pcpyld     %0,%1,%0        \n" // combine mask0, mask1
-                    "pceqb      %0,%0,$0        \n"
-                    "pand       %3,%3,%0        \n" // uDest0  &= uMask0;
-                    "por        %2,%2,%0        \n" // uSrc0   |= uMask0;
-                    "pxor       %2,%2,%0        \n" // uSrc0   ^= uMask0;
-                    "por        %2,%2,%3        \n" // uSrc0   |= uDest0;
-
-    	            : "+r" (uMask0), "+r" (uMask1), "+r" (uSrc0), "=r" (uDest0)
-                    : "r" (pLine8)
-    	         );    
-
+    	        __asm__ __volatile__ (
+    	            "lq         $8,  0x00(%2)    \n"
+    	            "lq         $9,  0x10(%2)    \n"
+    	            "qfsrv      $8,  $9, $8      \n"
+    	            "lq         $11, 0x00(%3)    \n"
+    	            "pcpyld     $10, %1, %0      \n"
+    	            "pceqb      $10, $10, $0     \n"
+    	            "pand       $11, $11, $10    \n"
+    	            "por        $8,  $8, $10     \n"
+    	            "pxor       $8,  $8, $10     \n"
+    	            "por        $8,  $8, $11     \n"
+    	            "sq         $8,  0x00(%3)    \n"
+    	            :
+    	            : "r" (uMask0), "r" (uMask1), "r" (pSrc8), "r" (pLine8)
+    	            : "$8", "$9", "$10", "$11", "memory"
+    	         );
+			} else
+			{
+    	        __asm__ __volatile__ (
+    	            "lq         $8, 0x00(%0)     \n"
+    	            "lq         $9, 0x10(%0)     \n"
+    	            "qfsrv      $8, $9, $8       \n"
+    	            "sq         $8, 0x00(%1)     \n"
+    	            :
+    	            : "r" (pSrc8), "r" (pLine8)
+    	            : "$8", "$9", "memory"
+    	         );
 			}
-
-			((Uint128 *)pLine8)[0] = uSrc0; 
 		}
 
 		pSrc8+=16;
