@@ -16,6 +16,19 @@ int MCSave_WriteSync(int block, int *pResult);
 #include "mainloop_shared.h"
 #include "mainloop_state.h"
 
+/* MCSAVE.IRX (custom async memory-card writer) is intentionally NOT
+   embedded in the ELF -- see Makefile lines ~130-154 and
+   embedded_irx.cpp. On NetherSX2 and on PS2 setups where MCSAVE.IRX
+   isn't shipped next to the binary, IOPLoadModule("MCSAVE.IRX")
+   fails and this flag stays FALSE. MCSave_Write then silently
+   returns 0 because _MCSave_nBufferBytes is still 0 (no Init), so
+   _MainLoopSaveSRAM(TRUE) returns FALSE and the menu modal shows
+   "Error Saving SRAM!". The save path below falls back to the
+   synchronous libmc-via-fioWrite API in that case -- the same one
+   _MainLoopLoadSRAM already uses for reads. Defined in
+   mainloop_iop.cpp. */
+extern Bool _MainLoop_bMCSaveReady;
+
 #if MAINLOOP_HISTORY
 extern Uint32 _nHistory;
 #endif
@@ -101,6 +114,16 @@ Bool _MainLoopSaveSRAM(Bool bSync)
 
         pSRAM = _pSystem->GetSRAMData();
 
+        {
+            static Bool bDirEnsured = FALSE;
+            if (!bDirEnsured)
+            {
+                int rc = MemCardCreateSave(_SramPath, _MainLoop_SaveTitle, TRUE);
+                printf("[SRAM] lazy MemCardCreateSave('%s') -> %d\n", _SramPath, rc);
+                bDirEnsured = TRUE;
+            }
+        }
+
         PathTruncFileName(SaveName, _RomName, PathGetMaxFileNameLength(_SramPath) - 4);
         snprintf(
             Path,
@@ -108,25 +131,45 @@ Bool _MainLoopSaveSRAM(Bool bSync)
             "%s/%s.%s",
             _SramPath,
             SaveName,
-            _pSystem->GetString(Emu::System::StringE::STRING_STATEEXT)
+            _pSystem->GetString(Emu::System::StringE::STRING_SRAMEXT)
         );
 
         ML_TRACE("SRAM save begin: rom='%s' bytes=%d sync=%d", _RomName, (int)nSramBytes, (int)bSync);
         ML_TRACE("SRAM save path: %s", Path);
 
-        MCSave_WriteSync(TRUE, NULL);
-        MCSave_Write((char *)Path, (char *)pSRAM, nSramBytes);
-
-        if (bSync)
+        if (_MainLoop_bMCSaveReady)
         {
-            int result;
+            /* Async path via the custom MCSAVE.IRX RPC server. Only
+               reachable when the IRX actually loaded (real PS2 with
+               the file shipped next to the ELF). */
+            MCSave_WriteSync(TRUE, NULL);
+            MCSave_Write((char *)Path, (char *)pSRAM, nSramBytes);
 
-            MCSave_WriteSync(TRUE, &result);
-            ML_TRACE("SRAM save sync result: %d", result);
-            return result ? TRUE : FALSE;
+            if (bSync)
+            {
+                int result;
+
+                MCSave_WriteSync(TRUE, &result);
+                ML_TRACE("SRAM save sync result: %d", result);
+                return result ? TRUE : FALSE;
+            }
+
+            return TRUE;
         }
-
-        return TRUE;
+        else
+        {
+            /* Sync fallback for NetherSX2 / any setup where
+               MCSAVE.IRX failed to load. Goes through rom0:XMCMAN
+               + rom0:XMCSERV via fileio's mc: device binding -- the
+               same path _MainLoopLoadSRAM uses for reads and the
+               same path MemCardCreateSave used at boot to write
+               icon.sys / icon.icn into mc0:/SNESticle/, so if the
+               save directory exists at all on the card then this
+               write will reach it. */
+            Bool bOk = MemCardWriteFile(Path, pSRAM, nSramBytes);
+            ML_TRACE("SRAM save (memcard fallback): %d", (int)bOk);
+            return bOk;
+        }
     }
 
     ML_TRACE("SRAM save skipped: no SRAM");
@@ -152,7 +195,7 @@ void _MainLoopLoadSRAM()
             "%s/%s.%s",
             _SramPath,
             SaveName,
-            _pSystem->GetString(Emu::System::StringE::STRING_STATEEXT)
+            _pSystem->GetString(Emu::System::StringE::STRING_SRAMEXT)
         );
 
         ML_TRACE("SRAM load begin: rom='%s' bytes=%d", _RomName, (int)nSramBytes);
