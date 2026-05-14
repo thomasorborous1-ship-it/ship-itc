@@ -219,12 +219,86 @@ void _MainLoopLoadSRAM()
     _bStateSaved = FALSE;
 }
 
+/* Force-update the SRAM dirty flag (_MainLoop_SRAMUpdated) right now,
+   ignoring the throttle in _MainLoopCheckSRAM. Used by _MenuEnable
+   before it decides whether to fire the synchronous save: if the
+   user wrote to SRAM in the last <CHECK_INTERVAL frames and pressed
+   L2+R2 before _MainLoopCheckSRAM ran its next sampled checksum,
+   the dirty flag would still be FALSE and the menu-open save would
+   be skipped without this. The cost is one full-SRAM checksum at
+   menu-open time, which is already a moment we accept a hitch for
+   (the modal "Saving SRAM..." is already shown there). */
+Bool _MainLoopForceCheckSRAM()
+{
+    Int32 nSramBytes = _pSystem ? _pSystem->GetSRAMBytes() : 0;
+
+    if (nSramBytes > 0)
+    {
+        Uint8 *pSRAM = _pSystem->GetSRAMData();
+        Uint32 uChecksum;
+
+        uChecksum = _CalcChecksum((Uint32 *)pSRAM, nSramBytes / 4);
+
+        if (_MainLoop_SRAMChecksum != uChecksum)
+        {
+            ML_TRACE(
+                "SRAM force-check: dirty (old=%08X new=%08X)",
+                (unsigned int)_MainLoop_SRAMChecksum,
+                (unsigned int)uChecksum
+            );
+            _MainLoop_SRAMUpdated = TRUE;
+            _MainLoop_SRAMChecksum = uChecksum;
+        }
+    }
+
+    return TRUE;
+}
+
 Bool _MainLoopCheckSRAM()
 {
     Int32 nSramBytes = _pSystem ? _pSystem->GetSRAMBytes() : 0;
 
     if (nSramBytes > 0)
     {
+        /* The inline auto-save trigger (decrement SaveCounter -> call
+           _MainLoopSaveSRAM(FALSE) when it hits zero) was removed
+           deliberately. On the !_MainLoop_bMCSaveReady fallback path
+           (NetherSX2 / any setup without MCSAVE.IRX next to the ELF)
+           _MainLoopSaveSRAM ends up in MemCardWriteFile, which
+           drives fioOpen/fioWrite/fioClose on the EE main thread and
+           blocks the per-frame loop for the full duration of the
+           memcard write. Games that keep the SRAM continuously
+           dirty (RPG stats counters, HUD timers, etc.) caused this
+           to fire at unpredictable moments and showed up as a
+           gameplay hitch, while games that don't keep it dirty just
+           saved at a different unpredictable point.
+
+           The user-visible save path is now exclusively the
+           synchronous one in _MenuEnable(TRUE) (mainloop_menu_runtime.cpp):
+           opening the in-game menu with L2+R2 still calls
+           _MainLoopSaveSRAM(TRUE) and shows the "Saving SRAM..." modal,
+           so the save still happens at a deterministic, user-driven
+           moment. _MainLoop_SRAMUpdated and _MainLoop_SRAMChecksum
+           below are still maintained because _MenuEnable reads
+           _MainLoop_SRAMUpdated to decide whether to actually run
+           the save block at all. */
+
+        /* The full-SRAM checksum used to run every frame (60Hz).
+           For larger carts (up to MAINLOOP_MAXSRAMSIZE = 64 KB,
+           i.e. 16k u32 adds) that's pure busywork: the only
+           consumer is the _MainLoop_SRAMUpdated dirty bit that
+           _MenuEnable polls when the user opens the menu, which
+           never needs frame-accurate freshness. Run the check
+           once every CHECK_INTERVAL frames (~0.5s @ 60Hz) so the
+           dirty flag is still set well before any plausible
+           L2+R2 press, without paying the cost on every frame. */
+        static Uint32 sCheckFrame = 0;
+        const Uint32 CHECK_INTERVAL = 30;
+        if ((sCheckFrame++ % CHECK_INTERVAL) != 0)
+        {
+            return TRUE;
+        }
+
         Uint8 *pSRAM = _pSystem->GetSRAMData();
         Uint32 uChecksum;
 
@@ -244,19 +318,7 @@ Bool _MainLoopCheckSRAM()
             );
 
             _MainLoop_SRAMUpdated = TRUE;
-            _MainLoop_SaveCounter = _MainLoop_AutoSaveTime;
             _MainLoop_SRAMChecksum = uChecksum;
-        }
-
-        if (_MainLoop_SaveCounter > 0)
-        {
-            _MainLoop_SaveCounter--;
-
-            if (_MainLoop_SaveCounter == 0)
-            {
-                ML_TRACE("SRAM autosave trigger");
-                _MainLoopSaveSRAM(FALSE);
-            }
         }
 
         PROF_LEAVE("_MainLoopCheckSRAM");

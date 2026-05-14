@@ -78,6 +78,17 @@ void _MenuEnable(Bool bEnable)
 		if (bEnable)
 		{
             #if 1 
+			/* Force a fresh dirty-flag check before deciding to save.
+			   _MainLoopCheckSRAM() throttles its full-SRAM checksum
+			   to once every ~30 frames (~0.5s) since its only job
+			   here is to keep _MainLoop_SRAMUpdated current for this
+			   exact decision -- without the force-check, an SRAM
+			   write that the game performed in the same 30-frame
+			   window as the user's L2+R2 press could leave
+			   _MainLoop_SRAMUpdated still FALSE and skip the save
+			   the user explicitly requested. */
+			_MainLoopForceCheckSRAM();
+
 			if (_MainLoopHasSRAM() && _MainLoop_SRAMUpdated)
 			{
 			   	MainLoopModalPrintf(10, "Saving SRAM...");
