@@ -136,6 +136,12 @@ Bool _MainLoopSaveSRAM(Bool bSync)
 
         ML_TRACE("SRAM save begin: rom='%s' bytes=%d sync=%d", _RomName, (int)nSramBytes, (int)bSync);
         ML_TRACE("SRAM save path: %s", Path);
+        printf("[SRAM] save path='%s' nBytes=%d mcsaveready=%d first16=%02X%02X%02X%02X%02X%02X%02X%02X%02X%02X%02X%02X%02X%02X%02X%02X\n",
+               Path, (int)nSramBytes, (int)_MainLoop_bMCSaveReady,
+               pSRAM[0], pSRAM[1], pSRAM[2], pSRAM[3],
+               pSRAM[4], pSRAM[5], pSRAM[6], pSRAM[7],
+               pSRAM[8], pSRAM[9], pSRAM[10], pSRAM[11],
+               pSRAM[12], pSRAM[13], pSRAM[14], pSRAM[15]);
 
         if (_MainLoop_bMCSaveReady)
         {
@@ -180,6 +186,9 @@ void _MainLoopLoadSRAM()
 {
     Int32 nSramBytes = _pSystem ? _pSystem->GetSRAMBytes() : 0;
 
+    printf("[SRAM] LoadSRAM enter: pSystem=%p nSramBytes=%d romname='%s'\n",
+           (void *)_pSystem, (int)nSramBytes, _RomName);
+
     if (nSramBytes > 0)
     {
         Char Path[1024];
@@ -198,17 +207,30 @@ void _MainLoopLoadSRAM()
             _pSystem->GetString(Emu::System::StringE::STRING_SRAMEXT)
         );
 
+        printf("[SRAM] load path='%s' pSRAM=%p nBytes=%d\n",
+               Path, (void *)pSRAM, (int)nSramBytes);
+
         ML_TRACE("SRAM load begin: rom='%s' bytes=%d", _RomName, (int)nSramBytes);
         ML_TRACE("SRAM load path: %s", Path);
 
-        if (MemCardReadFile(Path, pSRAM, nSramBytes))
+        Bool bOk = MemCardReadFile(Path, pSRAM, nSramBytes);
+        printf("[SRAM] MemCardReadFile -> %d\n", (int)bOk);
+
+        if (bOk)
         {
             _MainLoop_SRAMChecksum = _CalcChecksum((Uint32 *)pSRAM, nSramBytes / 4);
             ConPrint("SRAM loaded: %s\n", Path);
+            printf("[SRAM] load OK checksum=%08X first16=%02X%02X%02X%02X%02X%02X%02X%02X%02X%02X%02X%02X%02X%02X%02X%02X\n",
+                   (unsigned int)_MainLoop_SRAMChecksum,
+                   pSRAM[0], pSRAM[1], pSRAM[2], pSRAM[3],
+                   pSRAM[4], pSRAM[5], pSRAM[6], pSRAM[7],
+                   pSRAM[8], pSRAM[9], pSRAM[10], pSRAM[11],
+                   pSRAM[12], pSRAM[13], pSRAM[14], pSRAM[15]);
             ML_TRACE("SRAM load checksum: %08X", (unsigned int)_MainLoop_SRAMChecksum);
         }
         else
         {
+            printf("[SRAM] load FAILED path='%s' (file missing or short read)\n", Path);
             ML_TRACE("SRAM load failed or file missing: %s", Path);
         }
 

@@ -170,7 +170,14 @@ Bool MemCardReadFile(char *pPath, Uint8 *pData, Uint32 nBytes)
 {
 	int fd;
 
-	if (!_MemCard_bInitialized) return FALSE;
+	printf("MemCard: ReadFile('%s', %u) init=%d\n",
+	       pPath, (unsigned)nBytes, (int)_MemCard_bInitialized);
+
+	if (!_MemCard_bInitialized)
+	{
+		printf("MemCard: Read skipped (not init): %s\n", pPath);
+		return FALSE;
+	}
 
 	/* See MemCardWriteFile above for why this must be `>= 0` and not
 	   `> 0`. The same bug here previously caused _MainLoopLoadSRAM to
@@ -184,8 +191,11 @@ Bool MemCardReadFile(char *pPath, Uint8 *pData, Uint32 nBytes)
 		unsigned int result;
 		result = fioRead(fd, pData, nBytes);
 		fioClose(fd);
-		printf("MemCard: Read %s (%d)\n", pPath, result);
+		printf("MemCard: fioRead('%s') %u/%u%s\n",
+		       pPath, result, (unsigned)nBytes,
+		       (result == nBytes) ? "" : " <<< MISMATCH");
 		return (result == nBytes);
 	}
+	printf("MemCard: Read FAIL open: %s\n", pPath);
 	return FALSE;
 }
