@@ -146,9 +146,16 @@ Bool MemCardWriteFile(char *pPath, Uint8 *pData, Uint32 nBytes)
 		return FALSE;
 	}
 
+	/* fioOpen returns -1 on error and otherwise a valid descriptor,
+	   which on the iaddis legacy fileio device table can be 0. The
+	   original `if (fd > 0)` check treated fd==0 as a failure and
+	   leaked the descriptor without writing or closing. Use `>= 0`
+	   so the first SRAM file opened on a fresh memcard init (the
+	   common case where no other fileio handle is in flight) is
+	   actually written. */
 	fd = fioOpen(pPath, O_WRONLY | O_CREAT);
 	printf("MemCard: fioOpen-W('%s') -> %d\n", pPath, fd);
-	if (fd > 0)
+	if (fd >= 0)
 	{
 		unsigned int result;
 		result = fioWrite(fd, pData, nBytes);
@@ -165,8 +172,14 @@ Bool MemCardReadFile(char *pPath, Uint8 *pData, Uint32 nBytes)
 
 	if (!_MemCard_bInitialized) return FALSE;
 
+	/* See MemCardWriteFile above for why this must be `>= 0` and not
+	   `> 0`. The same bug here previously caused _MainLoopLoadSRAM to
+	   silently fail to populate m_SRam when fioOpen happened to hand
+	   back fd == 0, which the user perceives as "the SRAM saved but it
+	   never loaded when I opened the game again". */
 	fd = fioOpen(pPath, O_RDONLY);
-	if (fd > 0)
+	printf("MemCard: fioOpen-R('%s') -> %d\n", pPath, fd);
+	if (fd >= 0)
 	{
 		unsigned int result;
 		result = fioRead(fd, pData, nBytes);

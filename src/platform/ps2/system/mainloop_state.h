@@ -9,6 +9,7 @@ Bool _MainLoopHasSRAM();
 Bool _MainLoopSaveSRAM(Bool bSync);
 void _MainLoopLoadSRAM();
 Bool _MainLoopCheckSRAM();
+Bool _MainLoopForceCheckSRAM();
 void _MainLoopLoadState();
 void _MainLoopSaveState();
 Bool _MainLoopSaveSRAM(Bool bForce);
