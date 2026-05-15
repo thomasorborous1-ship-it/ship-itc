@@ -416,9 +416,17 @@ Bool _MainLoopExecuteFile(const char *pFileName, Bool bLoadSRAM)
 
     _MainLoopSetSampleRate(pSystem->GetSampleRate());
 
+	printf("[LOAD-CALL] _MainLoopExecuteFile pre-LoadSRAM: bLoadSRAM=%d romname='%s'\n",
+	       (int)bLoadSRAM, _RomName);
 	if (bLoadSRAM)
 	{
+		printf("[LOAD-CALL] calling _MainLoopLoadSRAM() now\n");
 		_MainLoopLoadSRAM();
+		printf("[LOAD-CALL] _MainLoopLoadSRAM() returned\n");
+	}
+	else
+	{
+		printf("[LOAD-CALL] _MainLoopLoadSRAM() SKIPPED (bLoadSRAM=FALSE)\n");
 	}
 
 	// clear screen
