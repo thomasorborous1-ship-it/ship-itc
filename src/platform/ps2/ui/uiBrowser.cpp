@@ -4,9 +4,12 @@
 #include <kernel.h>
 #include <libpad.h>
 #include <stdio.h>
+#include <dirent.h>
+#include <unistd.h>
+#include <sys/stat.h>
+#include <sys/types.h>
+#include <errno.h>
 #include "types.h"
-#define NEWLIB_PORT_AWARE
-#include "fileio.h"
 #if 0
 #include "font.h"
 #else
@@ -15,9 +18,7 @@
 #include "poly.h"
 #include "uiBrowser.h"
 extern "C" {
-#include "cdvd_rpc.h"
 #include "mcsave_ee.h"
-#include "ps2mem.h"	/* PS2MEM_UNCACHED */
 };
 
 static const char *_MenuEntries[]=
@@ -142,11 +143,11 @@ int CBrowserScreen::MenuEvent(Uint32 Type, Uint32 Parm1, void *Parm2)
 						case BROWSER_ENTRYTYPE_DRIVE:
 							break;
 						case BROWSER_ENTRYTYPE_DIR:
-							fioRmdir(str);
+							rmdir(str);
 							break;
 						default:
-							fioRemove(str);
-							fioRmdir(str);
+							unlink(str);
+							rmdir(str);
 							break;
 					}
 					pBrowser->Chdir(".");
@@ -427,7 +428,10 @@ void CBrowserScreen::Input(Uint32 buttons, Uint32 trigger)
 		if (GetEntryPath(str, sizeof(str))!=0)
 		{
 
-			CDVD_FlushCache();
+			/* Modern cdfs.irx handles cache invalidation internally on
+			   directory re-open; the legacy CDVD_FlushCache() RPC is no
+			   longer needed (and the IRX it talked to is no longer
+			   loaded). */
 
 	        switch(m_pDirEntries[m_iSelect].eType)
 	        {
@@ -451,49 +455,29 @@ void CBrowserScreen::Input(Uint32 buttons, Uint32 trigger)
 }
 
 
-#ifdef _EE
-static int _BrowserDread(int fd, io_dirent_t *dirent, Bool bIsMCDir)
-#else
-static int _BrowserDread(int fd, fio_dirent_t *dirent, Bool bIsMCDir)
-#endif
-{
-	/* MCSave_Dread is only meaningful for memcard directories: it
-	   forwards the fd to MCSAVE.IRX, which has its own private
-	   universe of fds. Sending a `cdfs:` (or `host:`/`mass:`) fd
-	   through it returns garbage and the directory looks empty.
-	   For non-memcard paths fall back to the regular fioDread. */
-	/* Defensive zeroing: the iaddis CDVD.IRX has a memset bug in
-	   CDVD_dread (memset(dirent, 0, sizeof(dirent)) only clears
-	   4 bytes - sizeof of a pointer - so most of the stat struct
-	   carries values from the previous entry). Wipe the buffer
-	   on the EE side first so any field the IRX leaves alone is
-	   guaranteed to be 0 instead of stale. */
-#ifdef _EE
-	memset(dirent, 0, sizeof(io_dirent_t));
-#else
-	memset(dirent, 0, sizeof(fio_dirent_t));
-#endif
+/* Directory iteration via newlib stdio + dirent.h. opendir/readdir
+   route through iomanX once init_ps2_filesystem_driver has run,
+   so cdfs:/, mc0:/, mass:/, host:/ all use the same API path.
 
-	if (bIsMCDir && MCSave_IsInitialized())
-	{
-		return MCSave_Dread(fd, dirent);
-	}
-	return fioDread(fd, dirent);
-}
-
+   We can no longer rely on dirent->d_type alone to tell files apart
+   from subdirectories - cdfs.irx leaves it at DT_UNKNOWN, and a
+   subset of older iomanX backends also under-fill it. To stay robust
+   across every device we always confirm directories with a follow-up
+   stat() on the joined path. The same trick handles the legacy
+   CDVD.IRX bug where a stray SUBDIR bit leaked into regular files
+   (see PR #76 for the original symptom). */
 
 void CBrowserScreen::SetDir(const Char *pDir)
 {
-//    Int32 nEntries, iEntry;
-	int fd;
+    DIR *dir;
 
     printf("MenuDir: %s\n", pDir);
 
 	ResetEntries();
 
 	strcpy(m_Dir, pDir);
-	/* "mc0:/..." or "mc1:/..." -> route Dread through MCSave_Dread.
-	   Anything else (cdfs:, host:, mass:, ...) goes via fioDread. */
+	/* Kept for legacy callers that read m_bMCDir; with iomanX the
+	   directory iteration path is the same for every device. */
 	m_bMCDir = (pDir[0] == 'm' && pDir[1] == 'c' && pDir[3] == ':');
 	m_iScroll = 0;
 	m_iSelect = 0;
@@ -503,135 +487,72 @@ void CBrowserScreen::SetDir(const Char *pDir)
 
 	if (strlen(pDir) > 0)
 	{
-		fd = fioDopen(pDir);
-		if (fd >= 0)
+		dir = opendir(pDir);
+		printf("opendir('%s') -> %p (errno=%d)\n",
+		       pDir, (void *)dir, dir ? 0 : errno);
+		if (dir != NULL)
 		{
-			/* Access dirbuf through the uncached EE segment
-			   (KSEG1 mirror, +0x20000000) so reads of the dread
-			   buffer always come from physical memory - never from
-			   the EE's stale data cache.
-
-			   Background: fioDread / MCSave_Dread call
-			   SifWriteBackDCache(buf, ...) before the RPC, but
-			   neither calls SifInvalidateDCache afterwards. The IOP
-			   then writes the directory entry into main memory via
-			   SBUS DMA, but the EE's L1 D$ has no automatic snoop
-			   for SBUS DMA, so dirent fields that are still resident
-			   in cache from a previous iteration (or from the EE's
-			   own pre-RPC memset) get read back instead of the
-			   freshly DMAed bytes. In practice this was making
-			   stat.attr carry the SUBDIR bit (0x10) of an earlier
-			   directory entry into a regular file slot, so a couple
-			   of files (e.g. MCSAVE.IRX, NETPLAY.IRX) were rendered
-			   with the directory colour even though the ISO 9660
-			   directory bit was clearly off. Bypassing the cache via
-			   PS2MEM_UNCACHED removes the coherency hazard. */
-			static Uint8 dirbuf[512] __attribute__((aligned(64)));
-#ifdef _EE
-			io_dirent_t *dirent =
-				(io_dirent_t *)PS2MEM_UNCACHED(&dirbuf);
-#else
-			fio_dirent_t *dirent = (fio_dirent_t *)&dirbuf;
-#endif
-		 //	printf("fioDopen: %s %d %d %d\n", pDir, fd, sizeof(dirent), sizeof(fio_dirent_t));
-			
-//			while (fioDread(fd, dirent) > 0) // && m_nEntries < 1280)
-
-			while (_BrowserDread(fd, dirent, m_bMCDir) > 0) // && m_nEntries < 1280)
-		    {
-		        BrowserEntryTypeE eType;
-										  
-		   //     printf("%s %02X %d \n", 		            dirent->name, dirent->stat.attr,    dirent->stat.size		            );
-				if (strcmp((char *)dirent->name,".") && strcmp((char *)dirent->name,".."))
-				{
-			        /* Modern PS2SDK no longer ships FIO_ATTR_SUBDIR (it lived in
-			           the legacy fileio.h that came with iaddis SNESticle), so the
-			           original entry-type detection used to live behind `#if 0`,
-			           which left eType uninitialised and made the renderer paint
-			           every entry as BROWSER_ENTRYTYPE_DIR (yellow). The two IRX
-			           drivers we actually use - the iaddis CDVD.IRX for cdfs: and
-			           MCSAVE.IRX for mc0:/mc1: - both flag directories the same
-			           way: bit 0x10 in stat.attr (the legacy FIO_ATTR_SUBDIR value;
-			           cdvd_iop.c line ~742 sets it directly from the ISO 9660
-			           directory bit). Recheck that bit explicitly so the legacy
-			           IRX behaviour matches even though the SDK header dropped the
-			           macro. The stat.mode field is left untouched by both
-			           IRX drivers (they only write addr/attr/size/hisize),
-			           so we cannot rely on FIO_S_IFDIR there. */
-			        const unsigned int kLegacyAttrSubdir = 0x10;
-			        bool bIsDir = (dirent->stat.attr & kLegacyAttrSubdir) != 0;
-
-			        if (bIsDir)
-			        {
-			            eType = BROWSER_ENTRYTYPE_DIR;
-			        } else
-			        {
-			            /* Resolve known ROM extensions to EXECUTABLE, leave
-			               everything else as OTHER (rendered dim). */
-			            eType = (BrowserEntryTypeE)SendMessage(2, 0, (void *)dirent->name);
-			            if (eType != BROWSER_ENTRYTYPE_EXECUTABLE)
-			                eType = BROWSER_ENTRYTYPE_OTHER;
-			        }
-			        AddEntry((char *)dirent->name, eType, dirent->stat.size);
-					/*
-					if (!(m_nEntries & 127))
-						ForceDraw();
-						*/
-				}
-		    }
-				
-		 	// printf("fioClose: %s %d\n", pDir, fd);
-			fioDclose(fd);
-
-			/* Cross-check every BROWSER_ENTRYTYPE_DIR entry by
-			   actually trying to fioDopen it. The iaddis CDVD.IRX
-			   intermittently leaks the SUBDIR attr bit into entries
-			   that are regular files on the underlying medium (the
-			   defensive memset + PS2MEM_UNCACHED reads above
-			   mitigate but do not eliminate the symptom; on real
-			   hardware files such as MCSAVE.IRX, NETPLAY.IRX and
-			   SYSTEM.CNF still come back marked as directories).
-			   We can only do this AFTER fioDclose-ing the parent
-			   handle: the iaddis CDVD IRX keeps a single global
-			   _CDVD_pCurrentOpenDir slot and rejects a second
-			   CDVD_dopen while another dir is still open. Entries
-			   that refuse to open as a directory get reclassified
-			   the same way regular files are - EXECUTABLE if the
-			   extension is on the ROM list, OTHER otherwise. */
-			for (Int32 i = 0; i < m_nEntries; i++)
+			struct dirent *de;
+			while ((de = readdir(dir)) != NULL)
 			{
-				BrowserEntryT *pEntry = &m_pDirEntries[i];
-				Char childPath[1024];
-				int childFd;
 				BrowserEntryTypeE eType;
+				Char childPath[1024];
+				struct stat st;
+				bool bIsDir = false;
+				Int32 nSize = 0;
 
-				if (pEntry->eType != BROWSER_ENTRYTYPE_DIR)
+				if (!strcmp(de->d_name, ".") || !strcmp(de->d_name, ".."))
 					continue;
 
-				snprintf(childPath, sizeof(childPath), "%s%s/",
-				         m_Dir, pEntry->name);
-
-				childFd = fioDopen(childPath);
-				if (childFd >= 0)
+				/* Trust d_type only when it is concrete; otherwise stat
+				   the joined path. cdfs.irx leaves d_type=DT_UNKNOWN. */
+				bool typeKnown = false;
+#ifdef DT_DIR
+				if (de->d_type == DT_DIR) { bIsDir = true; typeKnown = true; }
+				else if (de->d_type == DT_REG) { typeKnown = true; }
+#endif
+				if (!typeKnown)
 				{
-					/* Confirmed real directory. */
-					fioDclose(childFd);
-					continue;
+					snprintf(childPath, sizeof(childPath),
+					         "%s%s", m_Dir, de->d_name);
+					if (stat(childPath, &st) == 0)
+					{
+						bIsDir = S_ISDIR(st.st_mode) ? true : false;
+						nSize  = (Int32)st.st_size;
+					}
 				}
 
-				/* False positive: reclassify like a file. */
-				eType = (BrowserEntryTypeE)SendMessage(2, 0,
-				                                      (void *)pEntry->name);
-				if (eType != BROWSER_ENTRYTYPE_EXECUTABLE)
-					eType = BROWSER_ENTRYTYPE_OTHER;
-				pEntry->eType = eType;
+				if (bIsDir)
+				{
+					eType = BROWSER_ENTRYTYPE_DIR;
+				}
+				else
+				{
+					eType = (BrowserEntryTypeE)SendMessage(
+						2, 0, (void *)de->d_name);
+					if (eType != BROWSER_ENTRYTYPE_EXECUTABLE)
+						eType = BROWSER_ENTRYTYPE_OTHER;
+
+					/* Pick up size if we did not stat above. */
+					if (nSize == 0)
+					{
+						snprintf(childPath, sizeof(childPath),
+						         "%s%s", m_Dir, de->d_name);
+						if (stat(childPath, &st) == 0)
+							nSize = (Int32)st.st_size;
+					}
+				}
+
+				AddEntry(de->d_name, eType, nSize);
 			}
+			closedir(dir);
 		}
 	} else
 	{
         AddEntry("cdfs:", BROWSER_ENTRYTYPE_DRIVE, 0);
 //        AddEntry("cdrom:", BROWSER_ENTRYTYPE_DRIVE, 0);
         AddEntry("host:", BROWSER_ENTRYTYPE_DRIVE, 0);
+        AddEntry("mass:", BROWSER_ENTRYTYPE_DRIVE, 0);
         AddEntry("mc0:", BROWSER_ENTRYTYPE_DRIVE, 0);
         AddEntry("mc1:", BROWSER_ENTRYTYPE_DRIVE, 0);
 //        AddEntry("rom:", BROWSER_ENTRYTYPE_DRIVE, 0);

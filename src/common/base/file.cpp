@@ -1,16 +1,15 @@
 
-//#include <sys/stat.h>
-//#include <stdlib.h>
-//#include <stdio.h>
-#define NEWLIB_PORT_AWARE
-#include <fileio.h>
+#include <stdio.h>
 #include "types.h"
 #include "file.h"
 
+/* All generic file I/O helpers go through newlib stdio. With
+   init_ps2_filesystem_driver() up, fopen/fread/fwrite/fclose route
+   to iomanX, so "mc0:/...", "cdfs:/...", "mass:/..." and
+   "host:/..." are all handled by the same code path. */
 
 Bool FileReadMem(Char *pFilePath, void *pMem, Uint32 nBytes)
 {
-    #if 0
 	FILE *pFile;
 	pFile = fopen(pFilePath, "rb");
 	if (pFile)
@@ -21,27 +20,10 @@ Bool FileReadMem(Char *pFilePath, void *pMem, Uint32 nBytes)
 		return (nBytes == nReadBytes);
 	}
 	return FALSE;
-	#else
-
-	int hFile;
-	unsigned int nReadBytes;
-
-	hFile = fioOpen(pFilePath, O_RDONLY);
-	if (hFile < 0)
-	{
-		return FALSE;
-	}
-
-	nReadBytes = fioRead(hFile, pMem, nBytes);
-	fioClose(hFile);
-	
-	return (nReadBytes == nBytes);
-    #endif
 }
 
 Bool FileWriteMem(Char *pFilePath, void *pMem, Uint32 nBytes)
 {
-    #if 0
 	FILE *pFile;
 	Uint32 nWriteBytes;
 
@@ -53,52 +35,17 @@ Bool FileWriteMem(Char *pFilePath, void *pMem, Uint32 nBytes)
 		return (nBytes == nWriteBytes);
 	}
 	return FALSE;
-    #else
-
-	int hFile;
-	unsigned int nWriteBytes;
-
-	hFile = fioOpen(pFilePath, O_CREAT | O_WRONLY);
-	if (hFile < 0)
-	{
-		return FALSE;
-	}
-
-	nWriteBytes = fioWrite(hFile, pMem, nBytes);
-	fioClose(hFile);
-	
-	return (nWriteBytes == nBytes);
-    #endif
 }
 
 Bool FileExists(Char *pFilePath)
 {
-    #if 0
 	FILE *pFile;
 
 	pFile = fopen(pFilePath, "rb");
 	if (pFile)
 	{
 		fclose(pFile);
-		return true;
+		return TRUE;
 	}
-	else
-	{
-		return false;
-	}
-	#else
-
-	int hFile;
-
-	hFile = fioOpen(pFilePath, O_RDONLY);
-	if (hFile < 0)
-	{
-		return FALSE;
-	}
-
-	fioClose(hFile);
-	return TRUE;
-
-    #endif
+	return FALSE;
 }
-

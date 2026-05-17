@@ -14,8 +14,9 @@
    loadmodule lines. Helps debug audio init and module loading. */
 #define BOOTLOG(...) printf(__VA_ARGS__)
 #define MENU_STARTDIR ""
-#define NEWLIB_PORT_AWARE
-#include <fileio.h>
+#include <unistd.h>
+#include <fcntl.h>
+#include <sys/stat.h>
 #include <iopheap.h>
 #include <libpad.h>
 #include "libxpad.h"
@@ -87,7 +88,6 @@ extern "C" {
 
 extern "C" {
 #include "sjpcm.h"
-#include "cdvd_rpc.h"
 };
 
 #include "embedded_irx.h"
@@ -112,16 +112,29 @@ static int _LoadMcModule(const char *path, int argc, const char *argv)
 {
     void *iop_mem;
     int ret;
-	int fd;
+	FILE *fp;
 	int size;
+	struct stat st;
 
-	fd= fioOpen(path, O_RDONLY);
-	if (fd < 0)
+	/* Sized stat() works on every iomanX-registered device, including
+	   mc0:/ once init_memcard_driver has run (see app/main.cpp). The
+	   previous fioOpen + fioLseek(SEEK_END) round-trip was the legacy
+	   rom0:FILEIO path that this refactor replaces. */
+	if (stat(path, &st) < 0)
 	{
 		return -1;
 	}
-	size = fioLseek(fd, 0, SEEK_END);
-	fioClose(fd);
+	size = (int)st.st_size;
+
+	/* Verify the path is actually readable before we go reserve IOP
+	   heap. fopen() will route to mc0: / cdfs: / mass: etc. through
+	   iomanX once init_ps2_filesystem_driver has run. */
+	fp = fopen(path, "rb");
+	if (!fp)
+	{
+		return -1;
+	}
+	fclose(fp);
 
 	printf("LoadMcModule %s (%d)\n", path, size);
     iop_mem = SifAllocIopHeap(size);
@@ -245,13 +258,26 @@ void _MainLoopLoadModules(Char **ppSearchPaths)
 
 //    IOPLoadModule("rom0:SECRMAN", NULL, 0, NULL);
 
+	/* SIO2MAN + MCMAN + MCSERV are now loaded by
+	   init_ps2_filesystem_driver() in app/main.cpp before we ever get
+	   here. The modern PS2DEV copies register with iomanX so newlib
+	   stdio fopen("mc0:/...") routes through them. We only have to
+	   bring up pad/mtap (which the ps2_drivers filesystem stack does
+	   not touch) and finalise libmc.
+
+	   XPADMAN depends on XSIO2MAN, which conflicts with the
+	   non-X SIO2MAN that ps2_drivers' memcard driver pulls in. We
+	   keep the X-variant pad path conditional on XSIO2MAN loading
+	   successfully (real PS2); otherwise we fall back to PADMAN
+	   (emulator path), which talks to the standard SIO2MAN we already
+	   have loaded. */
 	BOOTLOG("[boot] rom0:XSIO2MAN: try\n");
 	if (IOPLoadModule("rom0:XSIO2MAN", NULL, 0, NULL) >= 0)
 	{
 		BOOTLOG("[boot] rom0:XSIO2MAN OK\n");
 		// use the X version of the iop libs
 		BOOTLOG("[boot] rom0:XMTAPMAN: try\n");
-	    if (IOPLoadModule("rom0:XMTAPMAN", NULL, 0, NULL) >= 0)
+		if (IOPLoadModule("rom0:XMTAPMAN", NULL, 0, NULL) >= 0)
 		{
 			BOOTLOG("[boot] xmtapInit/xmtapPortOpen\n");
 			xmtapInit(0);
@@ -259,54 +285,35 @@ void _MainLoopLoadModules(Char **ppSearchPaths)
 			BOOTLOG("[boot] xmtapInit/xmtapPortOpen done\n");
 		}
 		BOOTLOG("[boot] rom0:XPADMAN: try\n");
-	    if (IOPLoadModule("rom0:XPADMAN", NULL, 0, NULL) >= 0)
-	    {
+		if (IOPLoadModule("rom0:XPADMAN", NULL, 0, NULL) >= 0)
+		{
 			BOOTLOG("[boot] xpadInit/InputInit(TRUE)\n");
-	        xpadInit(0);
+			xpadInit(0);
 			InputInit(TRUE);
 			BOOTLOG("[boot] xpadInit/InputInit done\n");
-	    }
-
-		BOOTLOG("[boot] rom0:XMCMAN: try\n");
-	    IOPLoadModule("rom0:XMCMAN", NULL, 0, NULL);
-		BOOTLOG("[boot] rom0:XMCSERV: try\n");
-	    if (IOPLoadModule("rom0:XMCSERV", NULL, 0, NULL) >= 0)
-		{
-			BOOTLOG("[boot] MemCardInit (X)\n");
-			MemCardInit();
-			BOOTLOG("[boot] MemCardInit done (X)\n");
-			#if MAINLOOP_MEMCARD
-			MemCardCreateSave(_SramPath, _MainLoop_SaveTitle, TRUE);
-			#endif
 		}
 	} else
 	{
-		BOOTLOG("[boot] rom0:XSIO2MAN failed - falling back\n");
-		// use the regular versions
-		BOOTLOG("[boot] rom0:SIO2MAN: try\n");
-	    IOPLoadModule("rom0:SIO2MAN", NULL, 0, NULL);
+		BOOTLOG("[boot] rom0:XSIO2MAN failed - falling back to PADMAN\n");
 		BOOTLOG("[boot] rom0:PADMAN: try\n");
-	    if (IOPLoadModule("rom0:PADMAN", NULL, 0, NULL) >= 0)
-	    {
+		if (IOPLoadModule("rom0:PADMAN", NULL, 0, NULL) >= 0)
+		{
 			BOOTLOG("[boot] padInit/InputInit(FALSE)\n");
-	        padInit(0);
+			padInit(0);
 			InputInit(FALSE);
 			BOOTLOG("[boot] padInit/InputInit done\n");
-	    }
-
-		BOOTLOG("[boot] rom0:MCMAN: try\n");
-	    IOPLoadModule("rom0:MCMAN", NULL, 0, NULL);
-		BOOTLOG("[boot] rom0:MCSERV: try\n");
-	    if (IOPLoadModule("rom0:MCSERV", NULL, 0, NULL) >= 0)
-		{
-			BOOTLOG("[boot] MemCardInit (regular)\n");
-			MemCardInit();
-			BOOTLOG("[boot] MemCardInit done (regular)\n");
-			#if MAINLOOP_MEMCARD
-			MemCardCreateSave(_SramPath, _MainLoop_SaveTitle, TRUE);
-			#endif
 		}
 	}
+
+	/* libmc finalise. mcInit() picks up whichever MCMAN/MCSERV pair
+	   is currently loaded - the modern PS2DEV ones registered by
+	   init_memcard_driver() in main.cpp are detected automatically. */
+	BOOTLOG("[boot] MemCardInit (ps2_drivers mcman/mcserv)\n");
+	MemCardInit();
+	BOOTLOG("[boot] MemCardInit done\n");
+	#if MAINLOOP_MEMCARD
+	MemCardCreateSave(_SramPath, _MainLoop_SaveTitle, TRUE);
+	#endif
 
 	BOOTLOG("[boot] InitNetwork: enter\n");
 	bLoadedNetwork = _MainLoopInitNetwork(ppSearchPaths);
@@ -330,17 +337,15 @@ void _MainLoopLoadModules(Char **ppSearchPaths)
 	    }
 	}
 
-    BOOTLOG("[boot] CDVD.IRX: try load\n");
-    if (IOPLoadModule("CDVD.IRX", ppSearchPaths, 0, NULL) >= 0)
-    {
-        BOOTLOG("[boot] CDVD_Init()\n");
-        CDVD_Init();
-        BOOTLOG("[boot] CDVD_Init done\n");
-    }
-    else
-    {
-        BOOTLOG("[boot] CDVD.IRX skipped (not available)\n");
-    }
+    /* The custom CDVD.IRX (and CDVD_Init / CDVD_FlushCache RPC) was
+       the iaddis project's legacy cdfs replacement. It is no longer
+       loaded here because init_ps2_filesystem_driver() in app/main.cpp
+       has already brought up the modern cdfs.irx, which registers the
+       "cdfs:" device with iomanX. The browser and ROM loader now
+       reach the disc through plain newlib stdio (opendir("cdfs:/"),
+       fopen("cdfs:/ROMS/foo.sfc", "rb"), ...) instead of the bespoke
+       RPC. CDVD_FlushCache call-sites have been replaced with no-ops
+       or fileXioSync()/cdfs_FlushCache() where appropriate. */
 
     /* Audio: load audsrv.irx (modern PS2DEV audio service, replaces
        the legacy SjPCM stack). audsrv.irx depends on the SPU2 driver

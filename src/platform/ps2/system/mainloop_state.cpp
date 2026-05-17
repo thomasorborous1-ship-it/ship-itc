@@ -24,8 +24,8 @@ int MCSave_WriteSync(int block, int *pResult);
    returns 0 because _MCSave_nBufferBytes is still 0 (no Init), so
    _MainLoopSaveSRAM(TRUE) returns FALSE and the menu modal shows
    "Error Saving SRAM!". The save path below falls back to the
-   synchronous libmc-via-fioWrite API in that case -- the same one
-   _MainLoopLoadSRAM already uses for reads. Defined in
+   synchronous newlib-stdio-via-iomanX API in that case -- the same
+   one _MainLoopLoadSRAM already uses for reads. Defined in
    mainloop_iop.cpp. */
 extern Bool _MainLoop_bMCSaveReady;
 
@@ -165,13 +165,13 @@ Bool _MainLoopSaveSRAM(Bool bSync)
         else
         {
             /* Sync fallback for NetherSX2 / any setup where
-               MCSAVE.IRX failed to load. Goes through rom0:XMCMAN
-               + rom0:XMCSERV via fileio's mc: device binding -- the
-               same path _MainLoopLoadSRAM uses for reads and the
-               same path MemCardCreateSave used at boot to write
-               icon.sys / icon.icn into mc0:/SNESticle/, so if the
-               save directory exists at all on the card then this
-               write will reach it. */
+               MCSAVE.IRX failed to load. Goes through newlib stdio
+               (fopen/fwrite/fclose) which routes to mcman/mcserv
+               via iomanX -- the same path _MainLoopLoadSRAM uses
+               for reads and the same path MemCardCreateSave used
+               at boot to write icon.sys / icon.icn into
+               mc0:/SNESticle/, so if the save directory exists at
+               all on the card then this write will reach it. */
             Bool bOk = MemCardWriteFile(Path, pSRAM, nSramBytes);
             ML_TRACE("SRAM save (memcard fallback): %d", (int)bOk);
             return bOk;
@@ -287,7 +287,7 @@ Bool _MainLoopCheckSRAM()
            deliberately. On the !_MainLoop_bMCSaveReady fallback path
            (NetherSX2 / any setup without MCSAVE.IRX next to the ELF)
            _MainLoopSaveSRAM ends up in MemCardWriteFile, which
-           drives fioOpen/fioWrite/fioClose on the EE main thread and
+           drives fopen/fwrite/fclose on the EE main thread and
            blocks the per-frame loop for the full duration of the
            memcard write. Games that keep the SRAM continuously
            dirty (RPG stats counters, HUD timers, etc.) caused this

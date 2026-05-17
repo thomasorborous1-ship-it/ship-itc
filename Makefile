@@ -106,8 +106,22 @@ LIBDIRS := \
 # gsKit pulls in DMA helpers from dmaKit and the linker resolves
 # left-to-right. Linking order is also why -lkernel/-lc/-lm/-lstdc++
 # is kept at the end.
+#
+# -lps2_drivers comes from the ps2dev modern toolchain
+# (https://github.com/fjtrujy/ps2_drivers). It provides
+# init_ps2_filesystem_driver() and friends, plus embedded copies
+# of the IRX modules they need (iomanX, fileXio, mcman, mcserv,
+# cdfs, etc.). With this in place, newlib stdio fopen/fread/fwrite
+# on "mc0:/...", "cdfs:/...", "mass:/..." routes through iomanX
+# instead of the legacy rom0:FILEIO RPC.
+#
+# The static archive already embeds the IRX data via bin2c, so it
+# must come *before* the libs it depends on so the linker pulls in
+# the right symbols (poweroff, fileXio, iomanX, etc.).
 LIBS := \
 	-lgskit -ldmakit -lgskit_toolkit \
+	-lps2_drivers \
+	-lpoweroff -lfileXio -lcdvd \
 	-lmc -lpad -lps2ip \
 	-laudsrv \
 	-lpatches \

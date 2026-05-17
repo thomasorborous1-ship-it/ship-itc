@@ -4,59 +4,68 @@
 #include <stdlib.h>
 #include <string.h>
 
-#define NEWLIB_PORT_AWARE
-#include <fileio.h>
-
 #include "miniz.h"
 
-/* All ROM-source paths on the PS2 boot tree (cdfs:/, host:/, mc0:/...)
-   talk to the legacy fileio device list, NOT to iomanX, so we cannot
-   use stdio fopen() here even though miniz ships its own fopen-based
-   reader. We always read the whole compressed file into a heap buffer
-   first, then hand the buffer to miniz's mem-reader. The cost is the
-   one extra copy of the compressed file (typically a few MB tops). */
+/* All ROM-source paths reachable by the project (cdfs:/, mc0:/,
+   mass:/, host:/, ...) are exposed by iomanX once
+   init_ps2_filesystem_driver() has run. We can therefore use newlib
+   stdio uniformly. We still slurp the entire compressed file into a
+   heap buffer and hand it to miniz's mem-reader rather than letting
+   miniz fopen() it itself, because miniz's fopen path emits
+   fseek/ftell/fread patterns that some iomanX backends are picky
+   about (cdfs.irx in particular). The cost is one extra copy of the
+   compressed archive, which is a few MB tops. */
 
 static int read_file_to_alloc(const char *path, void **out_buf, int *out_size)
 {
-        int fd;
-        int size;
-        int n;
+        FILE *fp;
+        long size;
+        size_t n;
         void *buf;
 
         if (!path || !path[0])
                 return -1;
 
-        fd = fioOpen((char *)path, FIO_O_RDONLY);
-        if (fd < 0)
+        fp = fopen(path, "rb");
+        if (!fp)
                 return -1;
 
-        size = fioLseek(fd, 0, SEEK_END);
-        if (size <= 0)
+        if (fseek(fp, 0, SEEK_END) != 0)
         {
-                fioClose(fd);
+                fclose(fp);
                 return -1;
         }
-        fioLseek(fd, 0, SEEK_SET);
+        size = ftell(fp);
+        if (size <= 0)
+        {
+                fclose(fp);
+                return -1;
+        }
+        if (fseek(fp, 0, SEEK_SET) != 0)
+        {
+                fclose(fp);
+                return -1;
+        }
 
         buf = malloc((size_t)size);
         if (!buf)
         {
-                fioClose(fd);
+                fclose(fp);
                 return -1;
         }
 
-        n = fioRead(fd, buf, size);
-        fioClose(fd);
+        n = fread(buf, 1, (size_t)size, fp);
+        fclose(fp);
 
-        if (n != size)
+        if ((long)n != size)
         {
                 free(buf);
                 return -1;
         }
 
         *out_buf = buf;
-        *out_size = size;
-        return size;
+        *out_size = (int)size;
+        return (int)size;
 }
 
 /* Walks the variable-length gzip header (RFC 1952 section 2.3) and

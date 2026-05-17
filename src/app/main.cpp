@@ -1,14 +1,15 @@
 
 #include <stdio.h>
 #include <string.h>
+#include <unistd.h>
+#include <fcntl.h>
 #include <sifrpc.h>
 #include <loadfile.h>
 #include <kernel.h>
-#define NEWLIB_PORT_AWARE
-#include <fileio.h>
 #include <iopheap.h>
 #include <iopcontrol.h>
 #include <sbv_patches.h>
+#include <ps2_filesystem_driver.h>
 
 #include "types.h"
 #include "console.h"
@@ -62,7 +63,7 @@ void MainSetBootDir(const char *pPath)
 int full_reset()
 {
 	char imgcmd[64];
-	int fd;
+	FILE *fp;
 
 
 	/* The CDVD must be initialized here (before shutdown) or else the PS2
@@ -72,11 +73,12 @@ int full_reset()
 
 	/* Here we detect which IOP image we want to reset with.  Older Japanese
 	   models don't have EELOADCNF, so we fall back on the default image
-	   if necessary.  */
+	   if necessary. rom0:EELOADCNF is served by the BIOS rom0 device,
+	   which iomanX in fileXio.irx exposes to newlib stdio. */
 	*imgcmd = '\0';
 
-	if ((fd = fioOpen(eeloadcnf, O_RDONLY)) >= 0) {
-		fioClose(fd);
+	if ((fp = fopen(eeloadcnf, "rb")) != NULL) {
+		fclose(fp);
 
 		strcpy(imgcmd, updateloader);
 		strcat(imgcmd, eeloadcnf);
@@ -89,7 +91,7 @@ int full_reset()
 //	scr_printf("Shutting down subsystems.\n");
 
 	cdvdExit();
-	fioExit();
+	deinit_ps2_filesystem_driver();
 	SifExitIopHeap();
 	SifLoadFileExit();
 	SifExitRpc();
@@ -139,22 +141,30 @@ int main(int argc, char **argv)
 
 	/* Patch the rom0:LOADFILE service so SifExecModuleBuffer (used by
 	   our embedded-IRX loader in src/platform/ps2/system/embedded_irx.cpp)
-	   actually works. The stock retail BIOS LOADFILE module is missing
-	   LoadModuleBuffer support, so without these patches the EE call
-	   "succeeds" but the IRX never finishes registering its RPC server -
-	   audsrv_init / SjPCM_Init / etc. then spin forever in SifBindRpc.
-	   This is the documented workaround in PS2SDK's sbv_patches.h. The
-	   prefix check patch additionally lets us load modules from any
-	   device, which is useful for cdrom: / host: fallbacks. */
+	   and ps2_drivers' init_ps2_filesystem_driver actually work. The
+	   stock retail BIOS LOADFILE module is missing LoadModuleBuffer
+	   support, so without these patches the EE call "succeeds" but the
+	   IRX never finishes registering its RPC server. The prefix check
+	   patch additionally lets us load modules from any device, which
+	   is useful for cdrom: / host: fallbacks. */
 	sbv_patch_enable_lmb();
 	sbv_patch_disable_prefix_check();
 
-	/* Bind the EE-side fileio RPC client to the rom-resident FILEIO
-	   service. Without this, every fio* call (fioOpen, fioDopen,
-	   fioDread, ...) silently returns -1 because the RPC channel is
-	   not connected. The browser was therefore unable to list any
-	   files - in particular `cdfs:/` came up empty. */
-	fioInit();
+	/* Bring up the modern PS2DEV filesystem stack: iomanX, fileXio,
+	   poweroff, mcman/mcserv, cdfs, usb, mx4sio, dev9, hdd. Once this
+	   returns, newlib stdio (fopen/fread/fwrite/fclose/mkdir/opendir)
+	   routes through iomanX, so paths like "mc0:/SNESticle/<rom>.srm",
+	   "cdfs:/ROMS/foo.sfc", "mass:/bar/baz" all work as standard POSIX
+	   file paths from the EE side.
+
+	   The legacy rom0:FILEIO RPC was the original I/O path in this
+	   codebase (fioOpen / fioDopen / fioRead). It silently dropped a
+	   non-trivial fraction of memcard reads on emulators (the SRAM
+	   load bug that motivated this refactor), so we switch the whole
+	   EE side over to fileXio. The fio* API stays available for callers
+	   that still need it - fileXio's iomanX-based device list is a
+	   superset of the legacy fileio one. */
+	init_ps2_filesystem_driver();
 
 	// initialize cdvd
     cdvdInit(CDVD_INIT_NOWAIT);

@@ -4,8 +4,6 @@
 #include <kernel.h>
 #include <libpad.h>
 #include "types.h"
-#define NEWLIB_PORT_AWARE
-#include "fileio.h"
 #if 0
 #include "font.h"
 #else

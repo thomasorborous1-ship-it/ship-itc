@@ -1,9 +1,10 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
+#include <sys/types.h>
+#include <errno.h>
 #define MENU_STARTDIR ""
-#define NEWLIB_PORT_AWARE
-#include <fileio.h>
 #include <iopheap.h>
 #include <libpad.h>
 #include "libxpad.h"
@@ -77,7 +78,6 @@ extern "C" {
 
 extern "C" {
 #include "sjpcm.h"
-#include "cdvd_rpc.h"
 };
 
 extern "C" Int32 SNCPUExecute_ASM(SNCpuT *pCpu);
@@ -108,26 +108,31 @@ int _MainLoopInstallCallback(char *pDestName, char *pSrcName, int Position, int 
 
 void _DumpMemory()
 {
-	int fd;
-	fd = fioOpen("host:memdump.bin", O_WRONLY | O_CREAT);
-	if (fd >= 0)
+	FILE *fp;
+	fp = fopen("host:memdump.bin", "wb");
+	if (fp)
 	{
-		fioWrite(fd, (void *)0x100000, 4 * 1024 * 1024);
-		fioClose(fd);
+		fwrite((void *)0x100000, 1, 4 * 1024 * 1024, fp);
+		fclose(fp);
 	}
 }
 
 void _GetExploitDir(char *pStr)
 {
-	int fd;
+	FILE *fp;
 	char code = 'A';
-	char romver[16];
+	char romver[16] = {0};
 
-	// Determine the PS2's region.  
-	fd = fioOpen("rom0:ROMVER", O_RDONLY);
-	fioRead(fd, romver, sizeof romver);
-	fioClose(fd);
-	code  = (romver[4] == 'E' ? 'E' : (romver[4] == 'J' ? 'I' : 'A'));
+	// Determine the PS2's region. rom0:ROMVER is registered with
+	// iomanX by fileXio.irx, so newlib stdio reaches it the same way
+	// as any other path.
+	fp = fopen("rom0:ROMVER", "rb");
+	if (fp)
+	{
+		fread(romver, 1, sizeof(romver), fp);
+		fclose(fp);
+	}
+	code = (romver[4] == 'E' ? 'E' : (romver[4] == 'J' ? 'I' : 'A'));
 
 	sprintf(pStr, "B%cDATA-SYSTEM", code);
 }
@@ -137,7 +142,9 @@ void _AddTitleDB(char *pPath)
 	FILE *pFile;
 	char str[256];
 
-	CDVD_FlushCache();
+	/* Modern cdfs.irx flushes its directory cache automatically when
+	   the disc is reopened; no explicit CDVD_FlushCache() RPC is
+	   needed. */
 
 	pFile = fopen("cdfs:/SYSTEM.CNF", "rt");
 //	pFile = fopen("host:/SYSTEM.CNF", "rt");
@@ -186,26 +193,29 @@ typedef int (*CopyProgressCallBackT)(char *pDestName, char *pSrcName, int Positi
 int CopyFile(char *pDest, char *pSrc, CopyProgressCallBackT pCallBack)
 {
 	Uint8	Buffer[32*1024];
-	int fdSrc, fdDest;
-	int nTotalBytes=0;
-	int nBytes;
-	int nSrcSize;
+	FILE *fpSrc, *fpDest;
+	int nTotalBytes = 0;
+	size_t nBytes;
+	long nSrcSize = 0;
 
-	fdSrc = fioOpen(pSrc, O_RDONLY);
-	if (fdSrc <= 0)
+	fpSrc = fopen(pSrc, "rb");
+	if (!fpSrc)
 	{
 		printf("Unable to open file %s\n", pSrc);
 		return -1;
 	}
 
 	// get file size
-	nSrcSize = fioLseek(fdSrc, 0, SEEK_END);
-	fioLseek(fdSrc, 0, SEEK_SET);
-
-	fdDest = fioOpen(pDest, O_WRONLY | O_CREAT);
-	if (fdDest <= 0)
+	if (fseek(fpSrc, 0, SEEK_END) == 0)
 	{
-		fioClose(fdSrc);
+		nSrcSize = ftell(fpSrc);
+		fseek(fpSrc, 0, SEEK_SET);
+	}
+
+	fpDest = fopen(pDest, "wb");
+	if (!fpDest)
+	{
+		fclose(fpSrc);
 		printf("Unable to open file %s\n", pDest);
 		return -2;
 	}
@@ -213,31 +223,32 @@ int CopyFile(char *pDest, char *pSrc, CopyProgressCallBackT pCallBack)
 	do
 	{
 		if (pCallBack)
-			pCallBack(pDest, pSrc, nTotalBytes, nSrcSize);
+			pCallBack(pDest, pSrc, nTotalBytes, (int)nSrcSize);
 
-		nBytes = fioRead(fdSrc, Buffer, sizeof(Buffer));
+		nBytes = fread(Buffer, 1, sizeof(Buffer), fpSrc);
 		if (nBytes > 0)
 		{
-			fioWrite(fdDest, Buffer, nBytes);
-			nTotalBytes += nBytes;
+			fwrite(Buffer, 1, nBytes, fpDest);
+			nTotalBytes += (int)nBytes;
 		}
 	} while (nBytes > 0);
 
 	if (pCallBack)
-		pCallBack(pDest, pSrc, nTotalBytes, nSrcSize);
+		pCallBack(pDest, pSrc, nTotalBytes, (int)nSrcSize);
 
-	fioClose(fdSrc);
-	fioClose(fdDest);
-	printf("Copied %s->%s (%d bytes)\n", pSrc, pDest, nTotalBytes);	
+	fclose(fpSrc);
+	fflush(fpDest);
+	fclose(fpDest);
+	printf("Copied %s->%s (%d bytes)\n", pSrc, pDest, nTotalBytes);
 
-	fdDest = fioOpen(pDest, O_RDONLY);
-	if (fdDest > 0)
+	fpDest = fopen(pDest, "rb");
+	if (fpDest)
 	{
-		fioClose(fdDest);
+		fclose(fpDest);
 		return 0;
 	} else
 	{
-		printf("ERROR\n");	
+		printf("ERROR\n");
 		return -3;
 	}
 }
@@ -279,10 +290,10 @@ int InstallFiles(char *pDestPath, char *pSrcPath, char **ppInstallFiles, CopyPro
 	bTrailingSrc = _bTrailingPath(pSrcPath);
 	bTrailingDest = _bTrailingPath(pDestPath);
 
-	if (fioMkdir(pDestPath) < 0)
+	if (mkdir(pDestPath, 0777) < 0 && errno != EEXIST)
 	{
-		printf("Unable to create directory %s\n", pDestPath);
-	} 
+		printf("Unable to create directory %s (errno=%d)\n", pDestPath, errno);
+	}
 
 	while (*ppInstallFiles)
 	{

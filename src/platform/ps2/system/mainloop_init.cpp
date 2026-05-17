@@ -56,7 +56,6 @@ extern "C" {
 
 extern "C" {
 #include "sjpcm.h"
-#include "cdvd_rpc.h"
 };
 
 #include "uiBrowser.h"
