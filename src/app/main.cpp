@@ -21,6 +21,12 @@ extern "C" {
 #include "hw.h"
 };
 
+/* DLog: writes to EE SIO TX FIFO (defined in modules/sjpcm/sjpcm_rpc.c).
+   Plain printf on the EE never reaches PCSX2/NetherSX2's emulator log
+   in this build, so the only way to surface boot-phase diagnostics is
+   via the EE SIO channel.  See sjpcm_rpc.c for the rationale. */
+extern "C" void DLog(const char *fmt, ...);
+
 
 
 const char *updateloader = "rom0:UDNL ";
@@ -59,22 +65,24 @@ void MainSetBootDir(const char *pPath)
 	_Main_BootDir[i] = 0;
 }
 
-/* Reset the IOP and all of its subsystems.  */
+/* Reset the IOP and all of its subsystems.
+
+   Only reachable when booted from a memory card (see main()), which is
+   not the common ELF/ISO path on emulators.  We still avoid the legacy
+   custom CDVD.IRX RPC here for the same reason described next to the
+   removed cdvdInit() call in main() below: the modern cdfs.irx loaded
+   by ps2_drivers does not register the cdvd RPC at 0x80000592 that the
+   in-tree cdvdInit() expects, so calling it spins forever in
+   SifBindRpc.  All the cdfs cleanup we used to do here is now folded
+   into deinit_ps2_filesystem_driver(). */
 int full_reset()
 {
 	char imgcmd[64];
 	FILE *fp;
 
-
-	/* The CDVD must be initialized here (before shutdown) or else the PS2
-	   could hang on reboot.  I'm not sure why this happens.  */
-	if (cdvdInit(CDVD_INIT_NOWAIT) < 0)
-		return -1;
-
-	/* Here we detect which IOP image we want to reset with.  Older Japanese
-	   models don't have EELOADCNF, so we fall back on the default image
-	   if necessary. rom0:EELOADCNF is served by the BIOS rom0 device,
-	   which iomanX in fileXio.irx exposes to newlib stdio. */
+	/* rom0:EELOADCNF is served by the BIOS rom0 device, which iomanX in
+	   fileXio.irx exposes to newlib stdio.  Older Japanese models don't
+	   have EELOADCNF, so we fall back on the default image if so. */
 	*imgcmd = '\0';
 
 	if ((fp = fopen(eeloadcnf, "rb")) != NULL) {
@@ -83,14 +91,7 @@ int full_reset()
 		strcpy(imgcmd, updateloader);
 		strcat(imgcmd, eeloadcnf);
 	}
-//	scr_printf("rebooting with imgcmd '%s'\n", *imgcmd ? imgcmd : "(null)");
 
-	if (cdvdInit(CDVD_EXIT) < 0)
-		return -1;
-
-//	scr_printf("Shutting down subsystems.\n");
-
-	cdvdExit();
 	deinit_ps2_filesystem_driver();
 	SifExitIopHeap();
 	SifLoadFileExit();
@@ -101,9 +102,6 @@ int full_reset()
 
 	SifInitRpc(0);
 	FlushCache(0);
-
-	// initialize cdvd
-//    cdvdInit(CDVD_INIT_NOWAIT);
 
 	return 0;
 }
@@ -127,17 +125,10 @@ int main(int argc, char **argv)
 
 	MainSetBootDir(_Main_pBootPath);
 
-	printf("[SNES-AUDFIX-V3] main: enter, bootpath=%s\n", _Main_pBootPath);
+	DLog("[boot] main: enter, bootpath=%s", _Main_pBootPath ? _Main_pBootPath : "(null)");
 
 	SifInitRpc(0);
-
-	if (_Main_pBootPath[0]=='m' && _Main_pBootPath[1]=='c')
-	{
-//		installExceptionHandlers();
-
-		// reset if loaded from memory card
-		full_reset();
-	}
+	DLog("[boot] SifInitRpc done");
 
 	/* Patch the rom0:LOADFILE service so SifExecModuleBuffer (used by
 	   our embedded-IRX loader in src/platform/ps2/system/embedded_irx.cpp)
@@ -149,6 +140,7 @@ int main(int argc, char **argv)
 	   is useful for cdrom: / host: fallbacks. */
 	sbv_patch_enable_lmb();
 	sbv_patch_disable_prefix_check();
+	DLog("[boot] sbv patches applied");
 
 	/* Bring up the modern PS2DEV filesystem stack: iomanX, fileXio,
 	   poweroff, mcman/mcserv, cdfs, usb, mx4sio, dev9, hdd. Once this
@@ -164,30 +156,61 @@ int main(int argc, char **argv)
 	   EE side over to fileXio. The fio* API stays available for callers
 	   that still need it - fileXio's iomanX-based device list is a
 	   superset of the legacy fileio one. */
+	DLog("[boot] init_ps2_filesystem_driver: enter");
 	init_ps2_filesystem_driver();
+	DLog("[boot] init_ps2_filesystem_driver: done");
 
-	// initialize cdvd
-    cdvdInit(CDVD_INIT_NOWAIT);
+	if (_Main_pBootPath[0]=='m' && _Main_pBootPath[1]=='c')
+	{
+		/* Reset the IOP if we were loaded from a memory card.
+		   We do this AFTER init_ps2_filesystem_driver because full_reset
+		   needs fopen("rom0:EELOADCNF") to work, and rom0: is only
+		   routed to newlib stdio once iomanX has been brought up. */
+		DLog("[boot] booted from mc -> full_reset");
+		full_reset();
+		DLog("[boot] full_reset done -> re-init filesystem");
+		init_ps2_filesystem_driver();
+		DLog("[boot] filesystem re-init done");
+	}
+
+	/* cdvdInit(CDVD_INIT_NOWAIT) used to live here.  It is intentionally
+	   gone now: it binds to RPC 0x80000592 (CDVD_INIT_BIND_RPC, see
+	   src/platform/ps2/cdvd/cd.c) which was served by the iaddis-era
+	   custom CDVD.IRX.  That IRX is no longer loaded - the modern
+	   cdfs.irx that init_ps2_filesystem_driver() loads instead exposes
+	   cdfs: through iomanX and registers a different RPC number.  With
+	   no server bound to 0x80000592, cdvdInit's SifBindRpc spin loop
+	   never completes and the EE hangs silently (black screen, no
+	   further IOP output) before MainLoopInit even gets a chance to
+	   run.  All disc I/O now goes through fopen("cdfs:/...") via the
+	   refactor in src/platform/ps2/system/mainloop_load.cpp etc. */
 
     for (iArg=0; iArg < argc; iArg++)
     {
-        printf("%d: %s\n", iArg, argv[iArg]);
+        DLog("[boot] argv[%d] = %s", iArg, argv[iArg] ? argv[iArg] : "(null)");
     }
 
 	DmaReset();
+	DLog("[boot] DmaReset done");
 
     install_VRstart_handler();
+    DLog("[boot] install_VRstart_handler done");
 
 	ConInit();
+	DLog("[boot] ConInit done -> MainLoopInit");
 
 	if (MainLoopInit())
 	{
-		// do stuff here
+		DLog("[boot] MainLoopInit OK -> entering MainLoopProcess loop");
 		while (MainLoopProcess())
 		{
 		}
 
 		MainLoopShutdown();
+	}
+	else
+	{
+		DLog("[boot] MainLoopInit FAILED");
 	}
 
 	ConShutdown();

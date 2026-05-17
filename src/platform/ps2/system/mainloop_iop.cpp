@@ -9,10 +9,15 @@
 #define DEBUG_BOOT_SCREEN 0
 #endif
 
-/* BOOTLOG: was a no-op. Re-enable as printf so the boot sequence
-   shows up in the emulator's console log alongside the IOP
-   loadmodule lines. Helps debug audio init and module loading. */
-#define BOOTLOG(...) printf(__VA_ARGS__)
+/* BOOTLOG: route through DLog (defined in modules/sjpcm/sjpcm_rpc.c).
+   Plain EE printf never reaches PCSX2/NetherSX2's emulator log in this
+   build (the libc->SIF->IOP stdout wiring is broken), but the IOP-side
+   loadmodule lines do print.  DLog writes to the EE SIO TX FIFO which
+   the emulator captures on the EE_SIO channel, so by funneling BOOTLOG
+   through it the boot sequence interleaves correctly with the IOP
+   "loadmodule:" / "audsrv:" / "cdfs:" lines. */
+extern "C" void DLog(const char *fmt, ...);
+#define BOOTLOG(...) DLog(__VA_ARGS__)
 #define MENU_STARTDIR ""
 #include <unistd.h>
 #include <fcntl.h>
