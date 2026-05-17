@@ -64,7 +64,13 @@ extern "C" {
 #include "uiLog.h"
 
 
-#define BOOTLOG(...) do {} while(0)
+/* BOOTLOG: route boot-phase diagnostics through DLog (defined in
+   modules/sjpcm/sjpcm_rpc.c).  Plain printf on the EE never reaches
+   PCSX2/NetherSX2's emulator log in this build, so DLog (which writes
+   to the EE SIO TX FIFO) is the only practical way to see the boot
+   progression from outside the running app. */
+extern "C" void DLog(const char *fmt, ...);
+#define BOOTLOG(...) DLog(__VA_ARGS__)
 #define MENU_STARTDIR _MainLoop_MenuStartDir
 
 /* MAINLOOP_NETPORT lives in mainloop_shared.h (included above). */

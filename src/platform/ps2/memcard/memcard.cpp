@@ -111,36 +111,40 @@ int MemCardCreateSave(char *pDir, char *pTitle, Bool bForceWrite)
 
 Bool MemCardCheckNewCard()
 {
-	int mc_Type, mc_Free, mc_Format;
-	int ret;
-
-	if (!_MemCard_bInitialized) return FALSE;
-
-	mcGetInfo(0,0,&mc_Type,&mc_Free,&mc_Format);
-	mcSync(0, NULL, &ret);
-	printf("MemCard: mcGetInfo -> ret=%d type=%d free=%d fmt=%d\n",
-	       ret, mc_Type, mc_Free, mc_Format);
-
-	if (ret == -1)
-	{
-		mcGetInfo(0,0,&mc_Type,&mc_Free,&mc_Format);
-		mcSync(0, NULL, &ret);
-		return TRUE;
-	}
+	/* Hot-swap detection used to rely on libmc's mcGetInfo + mcSync,
+	   which talks to MCMAN/MCSERV over SIF RPC 0x80000400.  All other
+	   memcard I/O in this build goes through newlib stdio + iomanX
+	   (fopen / fwrite / fread / mkdir on mc0:/), which does NOT need
+	   that RPC, so we drop the libmc dependency entirely.  Card-swap
+	   detection mid-game is a nice-to-have, not a correctness
+	   requirement, and skipping it makes the code work in environments
+	   (NetherSX2, certain BIOS revisions) where the legacy MCMAN/MCSERV
+	   RPC does not get registered. */
 	return FALSE;
 }
 
 void MemCardInit()
 {
-	int rc = mcInit(MC_TYPE_MC);
-	printf("MemCard: mcInit -> %d\n", rc);
-	if (rc < 0) {
-		printf("MemCard: Failed to initialise memcard server!\n");
-	} else
-	{
-		printf("MemCard: Initialized\n");
-		_MemCard_bInitialized = TRUE;
-	}
+	/* We used to call mcInit(MC_TYPE_MC) here.  mcInit's first action
+	   is sceSifBindRpc(&g_cdata, 0x80000400, 0) in a do/while spin loop
+	   that waits until g_cdata.server is non-NULL.  On NetherSX2 / on
+	   real PS2 with the SCPH BIOS, RPC 0x80000400 is registered by the
+	   IOP-side mcserv module; in our boot, ps2_drivers'
+	   init_memcard_driver(true) loads sio2man.irx + mcman.irx +
+	   mcserv.irx from its embedded buffers but - for reasons that are
+	   still unclear (probably a clash with rom0:XSIO2MAN loaded later
+	   in mainloop_iop.cpp) - the mcserv RPC server never registers, so
+	   that do/while spin loop hangs forever.
+
+	   We do not actually need libmc to read or write SRAM: the whole
+	   memcard.cpp file now uses newlib stdio (fopen / fread / fwrite /
+	   fclose / mkdir on mc0:/...), which goes through fileXio -> iomanX
+	   -> mcman.irx and never touches the libmc RPC client.  So we just
+	   declare the subsystem initialised and let actual file I/O
+	   surface any remaining problems with concrete fopen errno values
+	   instead of an infinite SifBindRpc spin. */
+	printf("MemCard: stdio-only init (skipping libmc mcInit)\n");
+	_MemCard_bInitialized = TRUE;
 }
 
 /* All memcard I/O now goes through newlib stdio (fopen/fread/fwrite/
