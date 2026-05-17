@@ -160,33 +160,64 @@ int main(int argc, char **argv)
 	DLog("[boot] sbv patches applied");
 
 	/* Bring up the modern PS2DEV filesystem stack: iomanX, fileXio,
-	   poweroff, mcman/mcserv, cdfs, usb, mx4sio, dev9, hdd. Once this
-	   returns, newlib stdio (fopen/fread/fwrite/fclose/mkdir/opendir)
-	   routes through iomanX, so paths like "mc0:/SNESticle/<rom>.srm",
+	   poweroff, mcman/mcserv, cdfs, usb.  Once this is done, newlib
+	   stdio (fopen/fread/fwrite/fclose/mkdir/opendir) routes through
+	   iomanX, so paths like "mc0:/SNESticle/<rom>.srm",
 	   "cdfs:/ROMS/foo.sfc", "mass:/bar/baz" all work as standard POSIX
 	   file paths from the EE side.
 
 	   The legacy rom0:FILEIO RPC was the original I/O path in this
-	   codebase (fioOpen / fioDopen / fioRead). It silently dropped a
+	   codebase (fioOpen / fioDopen / fioRead).  It silently dropped a
 	   non-trivial fraction of memcard reads on emulators (the SRAM
 	   load bug that motivated this refactor), so we switch the whole
-	   EE side over to fileXio. The fio* API stays available for callers
+	   EE side over to fileXio.  The fio* API stays available for callers
 	   that still need it - fileXio's iomanX-based device list is a
-	   superset of the legacy fileio one. */
-	DLog("[boot] init_ps2_filesystem_driver: enter");
-	init_ps2_filesystem_driver();
-	DLog("[boot] init_ps2_filesystem_driver: done");
+	   superset of the legacy fileio one.
+
+	   We deliberately do NOT call the all-in-one
+	   init_ps2_filesystem_driver() that ps2_drivers ships.  That
+	   helper also calls init_dev9_driver(), init_hdd_driver(),
+	   mount_current_hdd_partition() and waitUntilDeviceIsReady(cwd) at
+	   the end, all of which we don't need (SNESticle never touches the
+	   PS2 HDD or DEV9 hardware) and at least one of which hangs
+	   silently after dev9 prints "unknown dev9 hardware" on emulators
+	   and most retail PS2s.  Inlining the bring-up here lets us bracket
+	   every step with a DLog so the next hang, if any, can be pinpointed
+	   directly from the EE_SIO emulator log. */
+	DLog("[boot] init_poweroff_driver: enter");
+	init_poweroff_driver();
+	DLog("[boot] init_poweroff_driver: done");
+
+	DLog("[boot] init_fileXio_driver: enter");
+	init_fileXio_driver();
+	DLog("[boot] init_fileXio_driver: done");
+
+	DLog("[boot] init_memcard_driver: enter");
+	init_memcard_driver(true);
+	DLog("[boot] init_memcard_driver: done");
+
+	DLog("[boot] init_usb_driver: enter");
+	init_usb_driver(true);
+	DLog("[boot] init_usb_driver: done");
+
+	DLog("[boot] init_cdfs_driver: enter");
+	init_cdfs_driver();
+	DLog("[boot] init_cdfs_driver: done");
 
 	if (_Main_pBootPath[0]=='m' && _Main_pBootPath[1]=='c')
 	{
 		/* Reset the IOP if we were loaded from a memory card.
-		   We do this AFTER init_ps2_filesystem_driver because full_reset
+		   We do this AFTER the filesystem stack is up because full_reset
 		   needs fopen("rom0:EELOADCNF") to work, and rom0: is only
 		   routed to newlib stdio once iomanX has been brought up. */
 		DLog("[boot] booted from mc -> full_reset");
 		full_reset();
 		DLog("[boot] full_reset done -> re-init filesystem");
-		init_ps2_filesystem_driver();
+		init_poweroff_driver();
+		init_fileXio_driver();
+		init_memcard_driver(true);
+		init_usb_driver(true);
+		init_cdfs_driver();
 		DLog("[boot] filesystem re-init done");
 	}
 
