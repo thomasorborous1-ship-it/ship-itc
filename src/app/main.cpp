@@ -130,6 +130,20 @@ int main(int argc, char **argv)
 	SifInitRpc(0);
 	DLog("[boot] SifInitRpc done");
 
+	/* Reset the IOP so the BIOS-resident modules (sceCdvdfsv, sceSio2man,
+	   sceMcMan, sceMcServ, etc.) are unloaded before ps2_drivers tries
+	   to install its own modern copies.  Without this reset the two
+	   sets of IRX modules end up half-overlapping in RPC tables and the
+	   tail of init_ps2_filesystem_driver() - specifically the mcman /
+	   poweroff hand-off - hangs silently after dev9 init prints its
+	   banner.  This is exactly the sequence picodrive's plat.c follows
+	   in platform/ps2/plat.c::reset_IOP. */
+	DLog("[boot] SifIopReset: enter");
+	while (!SifIopReset(NULL, 0)) {}
+	while (!SifIopSync()) {}
+	SifInitRpc(0);
+	DLog("[boot] SifIopReset done");
+
 	/* Patch the rom0:LOADFILE service so SifExecModuleBuffer (used by
 	   our embedded-IRX loader in src/platform/ps2/system/embedded_irx.cpp)
 	   and ps2_drivers' init_ps2_filesystem_driver actually work. The
@@ -137,7 +151,10 @@ int main(int argc, char **argv)
 	   support, so without these patches the EE call "succeeds" but the
 	   IRX never finishes registering its RPC server. The prefix check
 	   patch additionally lets us load modules from any device, which
-	   is useful for cdrom: / host: fallbacks. */
+	   is useful for cdrom: / host: fallbacks.
+
+	   These patches must run after SifIopReset because the reset
+	   reloads rom0:LOADFILE in its pristine, unpatched state. */
 	sbv_patch_enable_lmb();
 	sbv_patch_disable_prefix_check();
 	DLog("[boot] sbv patches applied");
