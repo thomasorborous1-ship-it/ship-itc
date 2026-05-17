@@ -22,6 +22,13 @@
 #ifndef _NESSYSTEM_H
 #define _NESSYSTEM_H
 
+/* types.h MUST come before emusys.h - emusys.h refers to Uint32/Int32
+   etc. but does not include types.h itself (SnesSystem gets away with
+   it because snes.h transitively pulls types.h first). The NES path
+   includes emusys.h directly via this header, so we need to seed the
+   typedefs explicitly. */
+#include "types.h"
+
 #include "emusys.h"
 
 #include "nesrom.h"
