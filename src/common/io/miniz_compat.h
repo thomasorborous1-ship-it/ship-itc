@@ -3,9 +3,9 @@
 
 /* Minimal helpers that replace the gz / zip APIs the SNESticle code
    used to call into zlib + minizip-unzip. Backed by miniz instead.
-   Both helpers go through `fioOpen / fioRead` (legacy fileio device
-   list) so that PS2 paths like cdfs:/, host:/ and mc0:/ all work the
-   same way the regular ROM loader does. */
+   Both helpers go through newlib stdio (fopen / fread), which after
+   init_ps2_filesystem_driver() resolves through iomanX, so PS2 paths
+   like cdfs:/, host:/, mass:/ and mc0:/ all work transparently. */
 
 #ifdef __cplusplus
 extern "C" {

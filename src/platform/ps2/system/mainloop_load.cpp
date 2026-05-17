@@ -1,8 +1,7 @@
 #include <string.h>
+#include <stdio.h>
 #include <fcntl.h>
 #include <unistd.h>
-#define NEWLIB_PORT_AWARE
-#include "fileio.h"
 #include "types.h"
 #include "console.h"
 #include "file.h"
@@ -43,26 +42,22 @@ void _MainLoopGetName(Char *pName, const Char *pPath)
 
 int _MainLoopReadBinaryData(Uint8 *pBuffer, Int32 nBufferBytes, const char *pRomFile)
 {
-        int nBytes = 0;
-        int hFile;
+        FILE *fp;
+        size_t nBytes;
 
-        /* Use fioOpen / fioRead / fioClose - the newlib POSIX open()
-           routes through iomanX, but the iaddis CDVD.IRX only registers
-           itself with the legacy fileio device list, so open() on a
-           cdfs:/... path returns -1. fio* talks to that legacy list
-           directly and works for cdfs:, host: and (via MCSAVE.IRX)
-           the memcards, which is the same API the original iaddis
-           SNESticle used. */
-        hFile = fioOpen(pRomFile, FIO_O_RDONLY);
-        if (hFile < 0)
+        /* newlib stdio. With the modern cdfs.irx registered by
+           init_ps2_filesystem_driver(), "cdfs:/...", "mc0:/...",
+           "mass:/..." and "host:/..." all resolve through iomanX. */
+        fp = fopen(pRomFile, "rb");
+        if (!fp)
         {
                 return -1;
         }
 
-        nBytes = fioRead(hFile, pBuffer, nBufferBytes);
-        fioClose(hFile);
+        nBytes = fread(pBuffer, 1, (size_t)nBufferBytes, fp);
+        fclose(fp);
 
-        return nBytes;
+        return (int)nBytes;
 }
 
 int _MainLoopReadGZData(Uint8 *pBuffer, Int32 nBufferBytes, const char *pRomFile)
@@ -204,13 +199,13 @@ Bool _MainLoopExecuteFile(const char *pFileName, Bool bLoadSRAM)
 	strcpy(FileName, pFileName);
 
 	// see if file exists first...
-	int hFile;
-    hFile = fioOpen(pFileName, FIO_O_RDONLY);
-	if (hFile < 0)
+	FILE *fp;
+	fp = fopen(pFileName, "rb");
+	if (!fp)
 	{
 		return FALSE;
 	}
-	fioClose(hFile);
+	fclose(fp);
 
 
 	// resolve file extension of filename

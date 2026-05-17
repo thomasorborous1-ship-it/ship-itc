@@ -3,8 +3,9 @@
 #include <libmc.h>
 #include <stdio.h>
 #include <string.h>
-#define NEWLIB_PORT_AWARE
-#include <fileio.h>
+#include <errno.h>
+#include <sys/stat.h>
+#include <sys/types.h>
 #include "types.h"
 
 #include "memcard.h"
@@ -53,10 +54,16 @@ int MemCardCreateSave(char *pDir, char *pTitle, Bool bForceWrite)
 		return -1;
 	}
 
-	mkRet = fioMkdir(pDir);
-	printf("MemCard: fioMkdir('%s') -> %d\n", pDir, mkRet);
+	/* mkdir() goes through iomanX -> mcman, which accepts paths of
+	   the form "mc0:/SNESticle". On a fresh card the directory does
+	   not exist and mkdir returns 0. On an already-populated card it
+	   returns -1 with errno=EEXIST, which is fine: the existing files
+	   will be overwritten below. */
+	mkRet = mkdir(pDir, 0777);
+	printf("MemCard: mkdir('%s') -> %d (errno=%d)\n",
+	       pDir, mkRet, mkRet < 0 ? errno : 0);
 
-	if (mkRet < 0)
+	if (mkRet < 0 && errno != EEXIST)
 	{
 		if (!bForceWrite)
 		{
@@ -136,9 +143,22 @@ void MemCardInit()
 	}
 }
 
+/* All memcard I/O now goes through newlib stdio (fopen/fread/fwrite/
+   fclose). Once init_ps2_filesystem_driver() has run, mc paths of the
+   form "mc0:/SNESticle/<rom>.srm" are handled by iomanX -> mcman.irx
+   directly, which is the same path picodrive / OPL / uLE use and is
+   much more reliable than the legacy rom0:FILEIO RPC the project
+   used before (fioOpen / fioRead).
+
+   In particular, with newlib stdio the SRAM read path actually
+   returns the full requested byte count on the first try, instead of
+   the partial / zero-byte reads we saw with fioRead on real hardware
+   - which was the root cause of "save works but load does not". */
+
 Bool MemCardWriteFile(char *pPath, Uint8 *pData, Uint32 nBytes)
 {
-	int fd;
+	FILE *fp;
+	size_t result;
 
 	if (!_MemCard_bInitialized)
 	{
@@ -146,29 +166,27 @@ Bool MemCardWriteFile(char *pPath, Uint8 *pData, Uint32 nBytes)
 		return FALSE;
 	}
 
-	/* fioOpen returns -1 on error and otherwise a valid descriptor,
-	   which on the iaddis legacy fileio device table can be 0. The
-	   original `if (fd > 0)` check treated fd==0 as a failure and
-	   leaked the descriptor without writing or closing. Use `>= 0`
-	   so the first SRAM file opened on a fresh memcard init (the
-	   common case where no other fileio handle is in flight) is
-	   actually written. */
-	fd = fioOpen(pPath, O_WRONLY | O_CREAT);
-	printf("MemCard: fioOpen-W('%s') -> %d\n", pPath, fd);
-	if (fd >= 0)
+	fp = fopen(pPath, "wb");
+	printf("MemCard: fopen-W('%s') -> %p\n", pPath, fp);
+	if (!fp)
 	{
-		unsigned int result;
-		result = fioWrite(fd, pData, nBytes);
-		fioClose(fd);
-		printf("MemCard: fioWrite('%s') %u/%u\n", pPath, result, (unsigned)nBytes);
-		return (result == nBytes);
+		printf("MemCard: Write FAIL open: %s (errno=%d)\n", pPath, errno);
+		return FALSE;
 	}
-	return FALSE;
+
+	result = fwrite(pData, 1, nBytes, fp);
+	fflush(fp);
+	fclose(fp);
+	printf("MemCard: fwrite('%s') %u/%u%s\n",
+	       pPath, (unsigned)result, (unsigned)nBytes,
+	       (result == nBytes) ? "" : " <<< MISMATCH");
+	return (result == nBytes);
 }
 
 Bool MemCardReadFile(char *pPath, Uint8 *pData, Uint32 nBytes)
 {
-	int fd;
+	FILE *fp;
+	size_t result;
 
 	printf("MemCard: ReadFile('%s', %u) init=%d\n",
 	       pPath, (unsigned)nBytes, (int)_MemCard_bInitialized);
@@ -179,23 +197,18 @@ Bool MemCardReadFile(char *pPath, Uint8 *pData, Uint32 nBytes)
 		return FALSE;
 	}
 
-	/* See MemCardWriteFile above for why this must be `>= 0` and not
-	   `> 0`. The same bug here previously caused _MainLoopLoadSRAM to
-	   silently fail to populate m_SRam when fioOpen happened to hand
-	   back fd == 0, which the user perceives as "the SRAM saved but it
-	   never loaded when I opened the game again". */
-	fd = fioOpen(pPath, O_RDONLY);
-	printf("MemCard: fioOpen-R('%s') -> %d\n", pPath, fd);
-	if (fd >= 0)
+	fp = fopen(pPath, "rb");
+	printf("MemCard: fopen-R('%s') -> %p\n", pPath, fp);
+	if (!fp)
 	{
-		unsigned int result;
-		result = fioRead(fd, pData, nBytes);
-		fioClose(fd);
-		printf("MemCard: fioRead('%s') %u/%u%s\n",
-		       pPath, result, (unsigned)nBytes,
-		       (result == nBytes) ? "" : " <<< MISMATCH");
-		return (result == nBytes);
+		printf("MemCard: Read FAIL open: %s (errno=%d)\n", pPath, errno);
+		return FALSE;
 	}
-	printf("MemCard: Read FAIL open: %s\n", pPath);
-	return FALSE;
+
+	result = fread(pData, 1, nBytes, fp);
+	fclose(fp);
+	printf("MemCard: fread('%s') %u/%u%s\n",
+	       pPath, (unsigned)result, (unsigned)nBytes,
+	       (result == nBytes) ? "" : " <<< MISMATCH");
+	return (result == nBytes);
 }
