@@ -197,7 +197,7 @@ int main(int argc, char **argv)
 	DLog("[boot] init_memcard_driver: done");
 
 	DLog("[boot] init_usb_driver: enter");
-	init_usb_driver(true);
+	init_usb_driver();
 	DLog("[boot] init_usb_driver: done");
 
 	DLog("[boot] init_cdfs_driver: enter");
@@ -216,7 +216,7 @@ int main(int argc, char **argv)
 		init_poweroff_driver();
 		init_fileXio_driver();
 		init_memcard_driver(true);
-		init_usb_driver(true);
+		init_usb_driver();
 		init_cdfs_driver();
 		DLog("[boot] filesystem re-init done");
 	}
