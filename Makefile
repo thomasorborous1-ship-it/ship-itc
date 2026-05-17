@@ -91,6 +91,12 @@ INCS := \
 	-I$(CURDIR)/src/snes/ppu \
 	-I$(CURDIR)/src/snes/rom \
 	-I$(CURDIR)/src/snes/state \
+	-I$(CURDIR)/src/nes/apu \
+	-I$(CURDIR)/src/nes/core \
+	-I$(CURDIR)/src/nes/cpu \
+	-I$(CURDIR)/src/nes/mapper \
+	-I$(CURDIR)/src/nes/state \
+	-I$(CURDIR)/src/nes/system \
 	-I$(CURDIR)/src/third_party/miniz \
 	-I$(PS2SDK)/common/include \
 	-I$(PS2SDK)/ee/include \

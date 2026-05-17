@@ -16,6 +16,9 @@
 #include "snes.h"
 #include "snstate.h"
 #include "snrom.h"
+#include "nessystem.h"
+#include "nesrom.h"
+#include "nesstate.h"
 #include "emusys.h"
 #include "emumovie.h"
 #include "rendersurface.h"
@@ -96,6 +99,19 @@ extern Emu::MovieClip *s_pMovieClip;
 extern SnesSystem     *_pSnes;
 extern SnesRom        *_pSnesRom;
 extern SnesStateT      _SnesState;
+
+/* NES integration (Phase 2). Defined in mainloop_globals.cpp.
+   FDS disk-swap state lives here too even though the runtime path
+   that consumes it (mainloop_input.cpp's R1/L1 disk swap) is still
+   gated until Phase 5 -- we only need the variables themselves to
+   exist so the linker is happy. */
+extern NesSystem      *_pNes;
+extern NesRom         *_pNesRom;
+extern NesFDSBios     *_pNesFDSBios;
+extern NesDisk        *_pNesFDSDisk;
+extern NesStateT       _NesState;
+extern Int32           _MainLoop_iDisk;
+extern Bool            _MainLoop_bDiskInserted;
 
 /* ---- ROM / framebuffer / audio buffers ---------------------------- */
 

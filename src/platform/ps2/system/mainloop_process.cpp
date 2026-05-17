@@ -230,33 +230,35 @@ Bool MainLoopProcess()
                 }
             }
 
-#if 0
-            if (_pSystem==_pSnes)
+            GPPrimDisableZBuf();
             {
-//                _ExecuteSnes(NULL, NULL, &Input, eMode);
- 			    GPPrimDisableZBuf();
-                _ExecuteSnes(pSurface, pMixBuffer, &Input, eMode);
-//                TextureUpload(&_OutTex, pSurface->GetLinePtr(0));
-            } else
-            if (_pSystem==_pNes)
-            {
-                _ExecuteNes(pSurface, pMixBuffer, &Input, eMode);
-
-                TextureUpload(&_OutTex, pSurface->GetLinePtr(0));
-            } 
-#else
- 			    GPPrimDisableZBuf();
+                static int __ec = 0;
+                if ((__ec & 0x3F) == 0)
                 {
-                    static int __ec = 0;
-                    if ((__ec & 0x3F) == 0)
-                    {
-                        DLog("[snes-aud] exec f=%d gs=%d mix=%p",
-                             __ec, (int)NetInput.eGameState, (void*)pMixBuffer);
-                    }
-                    __ec++;
+                    DLog("[mainloop] exec f=%d gs=%d mix=%p sys=%s",
+                         __ec, (int)NetInput.eGameState, (void*)pMixBuffer,
+                         (_pSystem == _pNes) ? "nes" :
+                         (_pSystem == _pSnes) ? "snes" : "?");
                 }
+                __ec++;
+            }
+
+            /* Phase 2 of the NES integration: dispatch ExecuteFrame
+               through the polymorphic Emu::System* when the loaded
+               system is the NES wrapper.  The SNES path stays on its
+               bespoke _ExecuteSnes helper that does the PPU upload
+               and CLUT bookkeeping.  NesSystem renders directly into
+               the surface (Phase 2 = diagnostic test pattern) and we
+               upload to the EE texture from here. */
+            if (_pSystem == _pNes)
+            {
+                _pNes->ExecuteFrame(&Input, pSurface, pMixBuffer, eMode);
+                TextureUpload(&_OutTex, pSurface->GetLinePtr(0));
+            }
+            else
+            {
                 _ExecuteSnes(pSurface, pMixBuffer, &Input, eMode);
-#endif
+            }
 		    _iframetex^=1;
         }
 

@@ -19,6 +19,9 @@
 #include "snes.h"
 #include "snstate.h"
 #include "snrom.h"
+#include "nessystem.h"
+#include "nesrom.h"
+#include "nesstate.h"
 #include "emusys.h"
 #include "emumovie.h"
 #include "rendersurface.h"
@@ -51,14 +54,19 @@ CScreen        *_MainLoop_pScreen = NULL;
 SnesSystem *_pSnes;
 SnesRom    *_pSnesRom;
 
-#if 0
-static NesSystem  *_pNes;
-static NesRom	  *_pNesRom;
-static NesFDSBios  *_pNesFDSBios;
-static NesDisk	  *_pNesFDSDisk;
-static Int32 _MainLoop_iDisk=0;
-static Bool _MainLoop_bDiskInserted=FALSE;
-#endif
+/* Phase 2 of the NES integration (feat/nes-infones).  The iaddis-era
+   #if 0 around these declarations is now flipped.  They are no longer
+   file-static because mainloop_init.cpp and mainloop_load.cpp need to
+   reach them through the extern declarations in mainloop_shared.h.
+   Disk-swap state stays un-#if'd here but is not yet driven from
+   input -- that part of mainloop_input.cpp is still gated for
+   Phase 5 (FDS support). */
+NesSystem   *_pNes;
+NesRom      *_pNesRom;
+NesFDSBios  *_pNesFDSBios;
+NesDisk     *_pNesFDSDisk;
+Int32        _MainLoop_iDisk          = 0;
+Bool         _MainLoop_bDiskInserted  = FALSE;
 
 Char _RomName[256];
 
@@ -86,9 +94,7 @@ CWavFile _WavFile;
 Uint8 _RomData[4 * 1024 * 1024 + 1024] __attribute__((aligned(64))) __attribute__ ((section (".bss")));
 
 SnesStateT		_SnesState;
-#if 0
-static NesStateT		_NesState;
-#endif
+NesStateT		_NesState;
 
 Emu::MovieClip *s_pMovieClip;
 

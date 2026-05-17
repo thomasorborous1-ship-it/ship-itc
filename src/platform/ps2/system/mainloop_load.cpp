@@ -169,11 +169,13 @@ void _MainLoopUnloadRom()
 	// unload old rom
 	_pSnes->SetRom(NULL);
 	_pSnesRom->Unload();
-#if 0
+
+	/* Phase 2: NES unload mirrors the SNES path. NesDisk is unloaded
+	   even though disk-swap input is still gated for Phase 5 - the
+	   wrapper itself exists and owns memory. */
 	_pNes->SetRom(NULL);
 	_pNesRom->Unload();
 	_pNesFDSDisk->Unload();
-#endif
     _bStateSaved = FALSE;
     _pSystem = NULL;
 
@@ -280,7 +282,10 @@ Bool _MainLoopExecuteFile(const char *pFileName, Bool bLoadSRAM)
 	// determine what kind of system to use for this rom
 	switch (eType)
 	{
-#if 0		
+		/* Phase 2 of the NES integration: route .nes/.fds/disksys.rom
+		   to _pNes (the NesSystem). FDS support is enabled here so
+		   the loader accepts the file, but ExecuteFrame is a stub
+		   today and disk-swap input is still gated until Phase 5. */
 		case MAINLOOP_ENTRYTYPE_NESROM:
 			pSystem = _pNes;
 			pRom    = _pNesRom;
@@ -301,7 +306,6 @@ Bool _MainLoopExecuteFile(const char *pFileName, Bool bLoadSRAM)
 			pBios   = _pNesFDSBios;
 			_MainLoop_fOutputIntensity = 0.8f;
 			break;
-#endif
 		case MAINLOOP_ENTRYTYPE_SNESROM:
 			pSystem = _pSnes;
 			pRom    = _pSnesRom;
@@ -364,11 +368,19 @@ Bool _MainLoopExecuteFile(const char *pFileName, Bool bLoadSRAM)
 	{
 		// setup disk system
 		pSystem->SetRom(pBios);
-#if 0
-		_pNes->SetNesDisk(_pNesFDSDisk);
-#else
-		_pSnes->SetSnesRom(_pSnesRom);
-#endif
+		/* Phase 2: NesSystem accepts the FDS disk pointer but the
+		   real swap mux (NesMMU) is still a Phase 5 task, so this
+		   stores the pointer without actually selecting a disk. The
+		   SNES SetSnesRom path is kept as a safety net in case the
+		   ROM that triggered pBios was somehow a SNES image. */
+		if (pSystem == _pNes)
+		{
+			_pNes->SetNesDisk(_pNesFDSDisk);
+		}
+		else
+		{
+			_pSnes->SetSnesRom(_pSnesRom);
+		}
 	} 
 	else
 	{
@@ -427,15 +439,15 @@ Bool _MainLoopExecuteFile(const char *pFileName, Bool bLoadSRAM)
 	// clear screen
     _fbTexture[0]->Clear();
     TextureUpload(&_OutTex, _fbTexture[0]->GetLinePtr(0));
-#if 0
 	if (eType == MAINLOOP_ENTRYTYPE_NESFDSDISK)
 	{
-		// default to disk 0
-		_MainLoop_iDisk=0;
-		_MainLoop_bDiskInserted=TRUE;
-		_pNes->GetMMU()->InsertDisk(_MainLoop_iDisk);
+		/* Phase 2: track disk-inserted state so the SRAM/state path
+		   builder picks up the right name, but the real disk swap
+		   (NesMMU::InsertDisk) is a Phase 5 task. _pNes->GetMMU()
+		   currently returns NULL so we deliberately skip that call. */
+		_MainLoop_iDisk         = 0;
+		_MainLoop_bDiskInserted = TRUE;
 	}
-#endif
 	return TRUE;
 }
 

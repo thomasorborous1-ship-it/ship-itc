@@ -98,3 +98,10 @@ src/platform/ps2/system/mainloop_process.cpp
 src/platform/ps2/system/mainloop_menu_runtime.cpp
 src/platform/ps2/system/global_alloc.cpp
 src/platform/ps2/system/embedded_irx.cpp
+src/nes/core/InfoNES.cpp
+src/nes/cpu/K6502.cpp
+src/nes/apu/InfoNES_pAPU.cpp
+src/nes/mapper/InfoNES_Mapper.cpp
+src/nes/system/InfoNES_System_PS2.cpp
+src/nes/system/nesrom.cpp
+src/nes/system/nessystem.cpp
