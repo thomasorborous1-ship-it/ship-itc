@@ -8,12 +8,15 @@ Years later, that buried build was reverse engineered and extracted by the commu
 
 This repository is an attempt to keep that code alive, reorganize it, fix broken parts, and make it easier to build and study today.
 
+In addition to SNES, the project now also integrates **InfoNES** to provide **NES** emulation support on the PlayStation 2.
+
 ## Current State
 
 - Many files from the recovered codebase were missing, incomplete, or corrupted.
 - Because of that, some features are still broken or may not behave correctly yet.
 - The original source layout was messy, so this repository reorganizes the project into more logical directories.
 - Right now, the main focus is **PlayStation 2** support.
+- NES support is provided via **InfoNES** (see `src/nes/`).
 - Development is currently being done in a **Debian environment running through Termux**, without access to a full desktop setup.
 
 ## PlayStation 2 Build
@@ -26,15 +29,19 @@ Follow the installation instructions from the [ps2dev repository](https://github
 After that, go to the project directory and build it:
 
 ```bash
-cd /SNESticleRevive
+cd ~/SNESticleRevive
 make
+```
 
 This should generate:
 
+```
 SNESticle.elf
+```
 
 To remove previous build files before rebuilding:
 
+```bash
 make clean
 ```
 
@@ -46,6 +53,8 @@ make clean
 
 [Wolf3s/SNESticle](https://github.com/Wolf3s/SNESticle) — improved fork used as one of the bases for this repository
 
+[InfoNES](https://github.com/jay-kumogata/InfoNES) — NES emulator integrated into this project
+
 
 TODO
 
@@ -53,7 +62,7 @@ TODO
 
 [PS2] Replace libcdvd with the latest PS2DEV libcdvd implementation. [Medium]
 
-[PS2] Update the Makefile for newer PS2SDK versions. [Medium] (In progress)
+[PS2] Update the Makefile for newer PS2SDK versions. [Medium] (Done)
 
 [PS2] Remove some custom GS implementations and switch to gsKit where possible. [Medium]
 
