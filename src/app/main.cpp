@@ -10,6 +10,7 @@
 #include <iopcontrol.h>
 #include <sbv_patches.h>
 #include <ps2_filesystem_driver.h>
+#include <libcdvd.h>
 
 #include "types.h"
 #include "console.h"
@@ -203,6 +204,17 @@ int main(int argc, char **argv)
 	DLog("[boot] init_cdfs_driver: enter");
 	init_cdfs_driver();
 	DLog("[boot] init_cdfs_driver: done");
+
+	/* Kick the IOP-side cdvdman so sceCdGetDiskType returns the real
+	   disc type instead of SCECdNODISC.  Without this cdfs.irx's
+	   isValidDisc refuses to enumerate the root, and
+	   opendir("cdfs:/") returns NULL - which is exactly the
+	   "browser shows no files" symptom.  Same call the working
+	   InfinityStation project uses in
+	   ps2boot/storage/disc.c::ps2_disc_init_once. */
+	DLog("[boot] sceCdInit: enter");
+	sceCdInit(SCECdINIT);
+	DLog("[boot] sceCdInit: done (diskType=%d)", sceCdGetDiskType());
 
 	if (_Main_pBootPath[0]=='m' && _Main_pBootPath[1]=='c')
 	{
