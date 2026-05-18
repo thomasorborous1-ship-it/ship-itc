@@ -10,6 +10,9 @@
 #include <iopcontrol.h>
 #include <sbv_patches.h>
 #include <ps2_filesystem_driver.h>
+#include <dirent.h>
+#include <sys/stat.h>
+#include <errno.h>
 #include <libcdvd.h>
 
 #include "types.h"
@@ -215,6 +218,33 @@ int main(int argc, char **argv)
 	DLog("[boot] sceCdInit: enter");
 	sceCdInit(SCECdINIT);
 	DLog("[boot] sceCdInit: done (diskType=%d)", sceCdGetDiskType());
+
+	/* Runtime FS probe: log opendir/stat for every top-level mount so
+	   the next boot tells us exactly where the browser breaks. The
+	   browser uses printf which never reaches the SIO log; this dup
+	   via DLog does. */
+	DLog("[probe] fs probe begin");
+	{
+		const char *paths[] = { "cdfs:/", "cdfs:", "mc0:/", "mc0:", "mass:/", "host:/" };
+		int i;
+		for (i = 0; i < (int)(sizeof(paths) / sizeof(paths[0])); i++) {
+			DIR *d; struct stat st; int rc;
+			errno = 0; rc = stat(paths[i], &st);
+			DLog("[probe] stat('%s') -> %d (errno=%d, mode=0%o)",
+			     paths[i], rc, errno, rc == 0 ? (unsigned)st.st_mode : 0);
+			errno = 0; d = opendir(paths[i]);
+			DLog("[probe] opendir('%s') -> %p (errno=%d)", paths[i], (void *)d, errno);
+			if (d) {
+				struct dirent *de; int n = 0;
+				while ((de = readdir(d)) != NULL && n < 8) {
+					DLog("[probe]   readdir[%d] = '%s'", n, de->d_name); n++;
+				}
+				DLog("[probe]   total entries listed = %d", n);
+				closedir(d);
+			}
+		}
+	}
+	DLog("[probe] fs probe end");
 
 	if (_Main_pBootPath[0]=='m' && _Main_pBootPath[1]=='c')
 	{
