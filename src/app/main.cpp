@@ -35,6 +35,17 @@ extern "C" {
    via the EE SIO channel.  See sjpcm_rpc.c for the rationale. */
 extern "C" void DLog(const char *fmt, ...);
 
+/* _ps2sdk_fileXio_init() lives in libfileXio (ee/rpc/filexio/src/
+   fileXio_ps2sdk.c) but is not declared in any public header.  Without
+   it, libcglue's _libcglue_fdman_path_ops keeps pointing at the legacy
+   fio (rom0:FILEIO.IRX) backend that ps2sdkapi.c installs by default,
+   and every fopen / opendir / stat on a modern iomanX device (cdfs:,
+   mc0:, mass:, mc1:) fails with ENOSYS=88 because the legacy FILEIO
+   RPC server is not loaded after our SifIopReset.  Calling this
+   function swaps the path ops table over to fileXio so newlib stdio
+   reaches iomanX. */
+extern "C" void _ps2sdk_fileXio_init(void);
+
 
 
 const char *updateloader = "rom0:UDNL ";
@@ -200,6 +211,15 @@ int main(int argc, char **argv)
 	init_fileXio_driver();
 	DLog("[boot] init_fileXio_driver: done");
 
+	/* Route newlib stdio (fopen / opendir / stat / mkdir / ...) through
+	   fileXio -> iomanX instead of the legacy fio backend.  Must come
+	   after init_fileXio_driver() (which loads fileXio.irx + iomanX.irx
+	   on the IOP) and before any fopen / opendir on a cdfs: / mc0: /
+	   mass: / host: path. */
+	DLog("[boot] _ps2sdk_fileXio_init: enter");
+	_ps2sdk_fileXio_init();
+	DLog("[boot] _ps2sdk_fileXio_init: done");
+
 	DLog("[boot] init_memcard_driver: enter");
 	init_memcard_driver(true);
 	DLog("[boot] init_memcard_driver: done");
@@ -257,7 +277,7 @@ int main(int argc, char **argv)
 	{
 		const char *paths[] = { "cdfs:/", "cdfs:", "mc0:/", "mass:/", "host:/" };
 		int i;
-		struct fileXioDirEntry de;
+		iox_dirent_t de;
 		iox_stat_t st;
 		for (i = 0; i < (int)(sizeof(paths) / sizeof(paths[0])); i++) {
 			int sr = fileXioGetStat(paths[i], &st);
@@ -289,6 +309,7 @@ int main(int argc, char **argv)
 		DLog("[boot] full_reset done -> re-init filesystem");
 		init_poweroff_driver();
 		init_fileXio_driver();
+		_ps2sdk_fileXio_init();
 		init_memcard_driver(true);
 		init_usb_driver();
 		init_cdfs_driver();
