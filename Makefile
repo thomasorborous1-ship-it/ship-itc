@@ -131,6 +131,7 @@ LIBS := \
 	-lmc -lpad -lps2ip \
 	-laudsrv \
 	-lpatches \
+	-lcglue \
 	-lkernel -lc -lm -lstdc++ -lgcc
 
 SRCS := \

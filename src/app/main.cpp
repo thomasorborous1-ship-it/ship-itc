@@ -9,6 +9,10 @@
 #include <iopheap.h>
 #include <iopcontrol.h>
 #include <sbv_patches.h>
+#define NEWLIB_PORT_AWARE
+#include <fileXio.h>
+#include <fileXio_rpc.h>
+#undef NEWLIB_PORT_AWARE
 #include <ps2_filesystem_driver.h>
 #include <dirent.h>
 #include <sys/stat.h>
@@ -245,6 +249,34 @@ int main(int argc, char **argv)
 		}
 	}
 	DLog("[probe] fs probe end");
+
+	/* Direct fileXio probe: bypass newlib entirely. If these work
+	   where opendir() above does not, the EE newlib<->iomanX glue
+	   is the issue and the browser should call fileXio* directly. */
+	DLog("[fxprobe] direct fileXio probe begin");
+	{
+		const char *paths[] = { "cdfs:/", "cdfs:", "mc0:/", "mass:/", "host:/" };
+		int i;
+		struct fileXioDirEntry de;
+		iox_stat_t st;
+		for (i = 0; i < (int)(sizeof(paths) / sizeof(paths[0])); i++) {
+			int sr = fileXioGetStat(paths[i], &st);
+			DLog("[fxprobe] fileXioGetStat('%s') -> %d (mode=0x%x)",
+			     paths[i], sr, sr == 0 ? (unsigned)st.mode : 0);
+			int d = fileXioDopen(paths[i]);
+			DLog("[fxprobe] fileXioDopen('%s') -> %d", paths[i], d);
+			if (d >= 0) {
+				int n = 0;
+				while (fileXioDread(d, &de) > 0 && n < 8) {
+					DLog("[fxprobe]   dread[%d] = '%s' (mode=0x%x)", n, de.name, (unsigned)de.stat.mode);
+					n++;
+				}
+				DLog("[fxprobe]   total entries listed = %d", n);
+				fileXioDclose(d);
+			}
+		}
+	}
+	DLog("[fxprobe] direct fileXio probe end");
 
 	if (_Main_pBootPath[0]=='m' && _Main_pBootPath[1]=='c')
 	{
