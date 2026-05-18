@@ -18,6 +18,7 @@
 #include <sys/stat.h>
 #include <errno.h>
 #include <libcdvd.h>
+#include <ps2sdkapi.h>
 
 #include "types.h"
 #include "console.h"
@@ -35,15 +36,24 @@ extern "C" {
    via the EE SIO channel.  See sjpcm_rpc.c for the rationale. */
 extern "C" void DLog(const char *fmt, ...);
 
-/* _ps2sdk_fileXio_init() lives in libfileXio (ee/rpc/filexio/src/
-   fileXio_ps2sdk.c) but is not declared in any public header.  Without
-   it, libcglue's _libcglue_fdman_path_ops keeps pointing at the legacy
-   fio (rom0:FILEIO.IRX) backend that ps2sdkapi.c installs by default,
-   and every fopen / opendir / stat on a modern iomanX device (cdfs:,
-   mc0:, mass:, mc1:) fails with ENOSYS=88 because the legacy FILEIO
-   RPC server is not loaded after our SifIopReset.  Calling this
-   function swaps the path ops table over to fileXio so newlib stdio
-   reaches iomanX. */
+/* The fileXio path ops table that libcglue routes fopen / opendir /
+   stat / mkdir to.  It is populated by __fileXioOpsInitializeImpl()
+   (which uses weak symbol probes to discover which newlib functions
+   are linked in) and the pointer is swapped into _libcglue_fdman_path_ops
+   by _ps2sdk_fileXio_init().
+
+   We declare and call both directly here because in this build the
+   pre-built libfileXio.a's automatic __attribute__((constructor)) for
+   __fileXioOpsInitializeImpl appears NOT to fire (or to fire with the
+   weak _open/_stat refs still resolving to 0), leaving the struct
+   entirely NULL.  When _ps2sdk_fileXio_init() then swaps the libcglue
+   pointer to point at it, every _libcglue_fdman_path_ops->open ==
+   NULL check in glue.c::_open / _stat / etc. trips and returns
+   ENOSYS=88.  Calling __fileXioOpsInitializeImpl() manually after the
+   IRX modules are up forces population from the now-fully-linked
+   newlib symbol table. */
+extern "C" _libcglue_fdman_path_ops_t __fileXio_fdman_path_ops;
+extern "C" void __fileXioOpsInitializeImpl(void);
 extern "C" void _ps2sdk_fileXio_init(void);
 
 
@@ -215,10 +225,32 @@ int main(int argc, char **argv)
 	   fileXio -> iomanX instead of the legacy fio backend.  Must come
 	   after init_fileXio_driver() (which loads fileXio.irx + iomanX.irx
 	   on the IOP) and before any fopen / opendir on a cdfs: / mc0: /
-	   mass: / host: path. */
-	DLog("[boot] _ps2sdk_fileXio_init: enter");
+	   mass: / host: path.
+
+	   Order matters:
+	   1) __fileXioOpsInitializeImpl() populates __fileXio_fdman_path_ops
+	      with the fileXio*Helper trampolines (open, stat, dread, ...).
+	      This MUST run from the EE main, not from libfileXio's static
+	      constructor - the constructor fires before our newlib glue is
+	      fully linked and the weak _open / _stat refs resolve to 0,
+	      leaving the struct NULL.
+	   2) _ps2sdk_fileXio_init() swaps _libcglue_fdman_path_ops to point
+	      at __fileXio_fdman_path_ops so newlib stdio uses the fileXio
+	      backend. */
+	DLog("[fxglue] before init: open=%p stat=%p",
+	     (void *)__fileXio_fdman_path_ops.open,
+	     (void *)__fileXio_fdman_path_ops.stat);
+	__fileXioOpsInitializeImpl();
+	DLog("[fxglue] after init:  open=%p stat=%p mkdir=%p",
+	     (void *)__fileXio_fdman_path_ops.open,
+	     (void *)__fileXio_fdman_path_ops.stat,
+	     (void *)__fileXio_fdman_path_ops.mkdir);
+	DLog("[fxglue] before swap: _libcglue_fdman_path_ops=%p",
+	     (void *)_libcglue_fdman_path_ops);
 	_ps2sdk_fileXio_init();
-	DLog("[boot] _ps2sdk_fileXio_init: done");
+	DLog("[fxglue] after swap:  _libcglue_fdman_path_ops=%p (==fx %p)",
+	     (void *)_libcglue_fdman_path_ops,
+	     (void *)&__fileXio_fdman_path_ops);
 
 	DLog("[boot] init_memcard_driver: enter");
 	init_memcard_driver(true);
@@ -309,6 +341,7 @@ int main(int argc, char **argv)
 		DLog("[boot] full_reset done -> re-init filesystem");
 		init_poweroff_driver();
 		init_fileXio_driver();
+		__fileXioOpsInitializeImpl();
 		_ps2sdk_fileXio_init();
 		init_memcard_driver(true);
 		init_usb_driver();
