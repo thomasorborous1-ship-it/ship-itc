@@ -5,18 +5,18 @@
  * Mirrors the structure of SnesSystem (snes.h) so the mainloop's polymorphic
  * dispatch through Emu::System* works identically for NES and SNES.
  *
- * Phase 2 scope:
- *   - SetRom() stores the NesRom* (does NOT yet hand the ROM data to InfoNES).
- *   - Reset()  is a no-op (real InfoNES_Reset() in Phase 3).
- *   - ExecuteFrame() paints the render surface a solid colour ("Mario isn't
- *     running yet, but at least we know our code is being dispatched") and
- *     advances the frame counter. This is intentional - we want a clear
- *     visual signal in NetherSX2 that the NES branch is reached.
- *   - SaveState / RestoreState are stubs.
- *   - GetString returns the correct file extensions for SRAM and save state
- *     so the rest of the mainloop's path-building logic works.
+ * Phase 3 scope (current):
+ *   - SetRom() seeds InfoNES globals (NesHeader, ROM, VROM, optional CHR
+ *     RAM) and runs InfoNES_Init() / InfoNES_Reset() for the cartridge.
+ *   - ExecuteFrame() steps the InfoNES core for exactly one NES frame and
+ *     converts WorkFrame[256*240] (RGB555) into the RGBA8 render surface
+ *     uploaded by mainloop_process.cpp.
+ *   - Input is wired through InfoNES_PadState -> reads SysInputT, remaps
+ *     SNES bits to NES bits.  No audio yet (Phase 4).
+ *   - SaveState / RestoreState are still stubs (Phase 5).
  *
- * Phase 3 fills in real ExecuteFrame using the InfoNES rendering pipeline.
+ * Phase 4 adds InfoNES_SoundOutput -> CMixBuffer, Phase 5 covers state +
+ * SRAM + FDS disk swap.
  */
 
 #ifndef _NESSYSTEM_H
@@ -78,11 +78,21 @@ public:
     void          SetNesDisk(NesDisk *pDisk) {m_pNesDisk = pDisk;}
 
 private:
+    void          DiagnosticPaint(class CRenderSurface *pTarget);
+
     NesRom    *m_pNesRom;     /* current cartridge image, owned by mainloop */
     NesDisk   *m_pNesDisk;    /* current FDS disk     (Phase 5) */
-    Uint32     m_uFrameTick;  /* per-frame counter, used by the stub
-                                 paint to flicker so the user can see
-                                 the loop is alive */
+    Uint8     *m_pCHRRam;     /* allocated only for ROMs that ship without
+                                 CHR ROM (NesHeader.byVRomSize == 0).
+                                 InfoNES treats VROM as 8 KB of CHR memory
+                                 the cart can write to; we own the buffer. */
+    Bool       m_bInitialized; /* InfoNES_Init() called once across the
+                                  lifetime of this NesSystem. */
+    Bool       m_bRomReady;    /* TRUE once SetRom has wired a cart through
+                                  InfoNES_Reset() successfully. */
+    Uint32     m_uFrameTick;  /* per-frame counter, used by the diagnostic
+                                 paint when no ROM is loaded so the user can
+                                 see the loop is alive */
 };
 
 #endif
