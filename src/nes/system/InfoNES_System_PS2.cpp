@@ -58,18 +58,51 @@ extern Emu::SysInputT       *g_pNesInputState;
 extern int SpriteJustHit;
 
 
-/* ---- NES master palette, RGB555 (verbatim InfoNES upstream) ------- */
+/* ---- NES master palette, RGB555 (standard NES palette, R high bits) -
+ *
+ * Upstream InfoNES ships an idiosyncratic palette (NesPalette[0]=0x39ce
+ * for the universal backdrop, which decodes to a magenta/pink instead
+ * of the black/dark-grey every other NES emulator uses).  That was the
+ * cause of the bright-pink sky in Super Mario Bros 3 vs. the black sky
+ * shown by RetroArch / FCEUX / Mesen.
+ *
+ * The values below are the standard FCEUX-style master palette
+ * (8-bit RGB triples documented at https://emudev.de and
+ * https://www.nesdev.org/nespal.txt) converted to RGB555 with R in the
+ * top 5 bits, G in the middle 5, B in the bottom 5 -- the same bit
+ * order InfoNES's WorkFrame[] uses.
+ */
 WORD NesPalette[ 64 ] =
 {
-  0x39ce, 0x1071, 0x0015, 0x2013, 0x440e, 0x5402, 0x5000, 0x3c20,
-  0x20a0, 0x0100, 0x0140, 0x00e2, 0x0ceb, 0x0000, 0x0000, 0x0000,
-  0x5ef7, 0x01dd, 0x10fd, 0x401e, 0x5c17, 0x700b, 0x6ca0, 0x6521,
-  0x45c0, 0x0240, 0x02a0, 0x0247, 0x0211, 0x0000, 0x0000, 0x0000,
-  0x7fff, 0x1eff, 0x2e5f, 0x223f, 0x79ff, 0x7dd6, 0x7dcc, 0x7e67,
-  0x7ae7, 0x4342, 0x2769, 0x2ff3, 0x03bb, 0x0000, 0x0000, 0x0000,
-  0x7fff, 0x579f, 0x6b9f, 0x5bff, 0x7dff, 0x7ddf, 0x7e9b, 0x7ebb,
-  0x7f1f, 0x5fd7, 0x575d, 0x47f3, 0x57fe, 0x0000, 0x0000, 0x0000
+  0x3def, 0x001f, 0x0017, 0x20b7, 0x4810, 0x5404, 0x5440, 0x4440,
+  0x28c0, 0x01e0, 0x01a0, 0x0160, 0x010b, 0x0000, 0x0000, 0x0000,
+  0x5ef7, 0x01ff, 0x017f, 0x351f, 0x6c19, 0x700b, 0x7ce0, 0x7162,
+  0x55e0, 0x02e0, 0x02a0, 0x02a8, 0x0231, 0x0000, 0x0000, 0x0000,
+  0x7fff, 0x1eff, 0x363f, 0x4dff, 0x7dff, 0x7d73, 0x7deb, 0x7e88,
+  0x7ee0, 0x5fe3, 0x2f6a, 0x2ff3, 0x03bb, 0x3def, 0x0000, 0x0000,
+  0x7fff, 0x539f, 0x5eff, 0x6eff, 0x7eff, 0x7e98, 0x7b56, 0x7f95,
+  0x7f6f, 0x6fef, 0x5ff7, 0x5ffb, 0x03ff, 0x7f7f, 0x0000, 0x0000
 };
+
+
+/* ---- 5-bit -> 8-bit expansion LUT --------------------------------- *
+ *
+ * The RGB555 -> RGBA8 conversion in InfoNES_LoadFrame needs to expand
+ * each 5-bit channel to 8 bits.  The mathematically-correct formula is
+ * (v << 3) | (v >> 2), which evaluates 0x1F -> 0xFF and 0 -> 0.  Doing
+ * that math inline runs ~245k arithmetic ops per frame (256*240*3 +
+ * the OR), which on the EE is enough latency to matter at 60 fps.
+ *
+ * Precomputing the 32 outputs once and indexing them by the 5-bit
+ * channel removes those shifts from the hot path and lets the compiler
+ * fold the inner loop into a few loads + a single SW (store-word). */
+static Uint8 Lut5to8[ 32 ];
+
+static void _InitLut5to8(void)
+{
+    for (int i = 0; i < 32; i++)
+        Lut5to8[i] = (Uint8)((i << 3) | (i >> 2));
+}
 
 
 /* ------------------------------------------------------------------ *
@@ -171,29 +204,37 @@ void InfoNES_LoadFrame(void)
     Uint32 uHeight = pTarget->GetHeight();
     if (uWidth < NES_DISP_WIDTH || uHeight < NES_DISP_HEIGHT) return;
 
-    /* Convert 240 NES lines into the top 240 rows of the texture. */
+    /* One-time init of the 5->8 expansion LUT. Cheap to re-check. */
+    static int s_bLutReady = 0;
+    if (!s_bLutReady) { _InitLut5to8(); s_bLutReady = 1; }
+
+    const Uint8 *pLut = Lut5to8;
+
+    /* Convert 240 NES lines into the top 240 rows of the texture.
+       The inner loop writes one Uint32 per pixel (single SW on EE)
+       and pulls the 5->8 expansion out into a 32-entry LUT so the
+       only arithmetic per pixel is three shifts + one OR + one
+       table-indexed load per channel. */
     for (Uint32 iY = 0; iY < NES_DISP_HEIGHT; iY++)
     {
-        Uint8 *pDst = pTarget->GetLinePtr((Int32)iY);
-        if (!pDst) continue;
+        Uint8 *pDstBytes = pTarget->GetLinePtr((Int32)iY);
+        if (!pDstBytes) continue;
 
-        WORD *pSrc = &WorkFrame[iY * NES_DISP_WIDTH];
+        Uint32 *pDst = (Uint32 *)pDstBytes;
+        const WORD *pSrc = &WorkFrame[iY * NES_DISP_WIDTH];
 
         for (Uint32 iX = 0; iX < NES_DISP_WIDTH; iX++)
         {
             WORD w = pSrc[iX];
 
-            /* RGB555 -> RGBA8.  Expand 5 bits to 8 by left-shifting
-               and OR'ing the top 3 bits back in so 0x1F maps to 0xFF
-               instead of 0xF8. */
-            Uint8 r5 = (Uint8)((w >> 10) & 0x1F);
-            Uint8 g5 = (Uint8)((w >>  5) & 0x1F);
-            Uint8 b5 = (Uint8)( w        & 0x1F);
+            /* RGB555 -> RGBA8 (R = lowest byte, A = highest byte
+               in the Uint32 little-endian word, matching what the
+               SNES PPU writes to the same surface). */
+            Uint32 r8 = pLut[(w >> 10) & 0x1F];
+            Uint32 g8 = pLut[(w >>  5) & 0x1F];
+            Uint32 b8 = pLut[ w        & 0x1F];
 
-            pDst[iX * 4 + 0] = (Uint8)((r5 << 3) | (r5 >> 2));
-            pDst[iX * 4 + 1] = (Uint8)((g5 << 3) | (g5 >> 2));
-            pDst[iX * 4 + 2] = (Uint8)((b5 << 3) | (b5 >> 2));
-            pDst[iX * 4 + 3] = 0xFF;
+            pDst[iX] = 0xFF000000u | (b8 << 16) | (g8 << 8) | r8;
         }
     }
 
@@ -224,9 +265,14 @@ void InfoNES_LoadFrame(void)
  *   bit 3 = START     bit 7 = RIGHT
  *
  * Player mapping (matches how _MainLoopSnesInput already turned the
- * PS2 buttons into SNES bits):
- *   PS2 Circle / Triangle (= SNES A / SNES X) -> NES A
- *   PS2 Cross  / Square   (= SNES B / SNES Y) -> NES B
+ * PS2 buttons into SNES bits).  PS2 convention is that the bottom of
+ * the diamond (Cross) is the primary action button -- in NES Mario
+ * games that's the JUMP button, which is NES A.  Triangle (top) maps
+ * to NES A too so a SF-style 4-face controller still works.  Square /
+ * Circle map to NES B (run/secondary).
+ *
+ *   PS2 Cross  / Triangle (= SNES B / SNES X) -> NES A (jump)
+ *   PS2 Square / Circle   (= SNES Y / SNES A) -> NES B (run)
  *   PS2 Select / Start                         -> NES Select / Start
  *
  * PAD_System is for emulator-level commands like PAD_SYS_QUIT; we
@@ -238,8 +284,8 @@ static DWORD MapSnesToNes(Uint16 snes)
     DWORD nes = 0;
     if (snes == EMUSYS_DEVICE_DISCONNECTED) return 0;
 
-    if (snes & (SNESIO_JOY_A | SNESIO_JOY_X))      nes |= 0x01; /* A      */
-    if (snes & (SNESIO_JOY_B | SNESIO_JOY_Y))      nes |= 0x02; /* B      */
+    if (snes & (SNESIO_JOY_B | SNESIO_JOY_X))      nes |= 0x01; /* A=jump */
+    if (snes & (SNESIO_JOY_A | SNESIO_JOY_Y))      nes |= 0x02; /* B=run  */
     if (snes &  SNESIO_JOY_SELECT)                  nes |= 0x04; /* SELECT */
     if (snes &  SNESIO_JOY_START)                   nes |= 0x08; /* START  */
     if (snes &  SNESIO_JOY_UP)                      nes |= 0x10;
