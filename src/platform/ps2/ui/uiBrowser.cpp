@@ -64,7 +64,10 @@ void PathTruncFileName(Char *pOut, Char *pStr, Int32 nMaxChars);
 int CBrowserScreen::MenuEvent(Uint32 Type, Uint32 Parm1, void *Parm2)
 {
 	CBrowserScreen *pBrowser = (CBrowserScreen *)Parm2;
-	Char str[256];
+	/* m_Dir is 512 chars and an entry name can now be up to 255; pick
+	   1024 so the joined path can never wrap on us regardless of how
+	   deep the user has nested their ROM library. */
+	Char str[1024];
 
 	if (pBrowser->GetEntryPath(str, sizeof(str)) == 0)
 	{
@@ -258,31 +261,43 @@ void CBrowserScreen::Draw()
 
 	for (iLine=0; iLine < m_MaxLines; iLine++)
 	{
-		Char str[128];
-		Char sizestr[128];
+		/* sized to match BROWSER_ENTRY_MAXCHARS (256) so snprintf with
+		   "%s" + pEntry->name cannot trip -Wformat-truncation. The
+		   visible portion is still capped to 120 chars at the end of
+		   this block so we don't overrun the on-screen list column. */
+		Char str[BROWSER_ENTRY_MAXCHARS + 4];
+		Char sizestr[32];
 
 		if (iEntry>=0 && iEntry < m_nEntries)
 		{
 			BrowserEntryT *pEntry = &m_pDirEntries[iEntry];
 			if (pEntry->eType==BROWSER_ENTRYTYPE_DIR)
 			{
-				sprintf(str, "/%s", pEntry->name);
+				snprintf(str, sizeof(str), "/%s", pEntry->name);
 				sprintf(sizestr, " ");
 			}
 			else
 			if (pEntry->eType==BROWSER_ENTRYTYPE_DRIVE)
 			{
-				sprintf(str, "%s", pEntry->name);
+				snprintf(str, sizeof(str), "%s", pEntry->name);
 				sprintf(sizestr, " ");
 			}
 			else
 			{
-				sprintf(str, "%s", pEntry->name);
+				snprintf(str, sizeof(str), "%s", pEntry->name);
 				sprintf(sizestr, "%3dK", pEntry->size / 1024);
 			}
 
-			// limit length of string
-			str[60] = 0;
+			/* The original iaddis truncation hard-stopped names at 60
+			   chars to keep them inside the FontPuts viewport. With
+			   BROWSER_ENTRY_MAXCHARS bumped to 256 the displayed string
+			   no longer has to be the same width as the storage buffer,
+			   so we keep a visual cap to avoid clipping into the right
+			   panel but raise it from 60 -> 120 so users can actually
+			   see enough of long No-Intro / GoodSNES filenames to pick
+			   the right ROM. The 60-char cut never affected fopen since
+			   GetEntryPath reads from m_pDirEntries[i].name directly. */
+			str[120] = 0;
 
 			// render selection bar
 			if (iEntry == m_iSelect)
@@ -426,7 +441,10 @@ void CBrowserScreen::Input(Uint32 buttons, Uint32 trigger)
 
 	if (trigger & (PAD_CROSS | PAD_START))
 	{
-		char str[256];
+		/* Same sizing rationale as in MenuEvent: m_Dir up to 512 + entry
+		   name up to 255 fits comfortably in 1024, and this is the path
+		   that eventually reaches fopen() through _MainLoopExecuteFile. */
+		char str[1024];
 
 		if (GetEntryPath(str, sizeof(str))!=0)
 		{
@@ -567,7 +585,10 @@ void CBrowserScreen::SetDir(const Char *pDir)
 
 void CBrowserScreen::Chdir(const Char *pSubDir)
 {
-	Char dir[256];
+	/* m_Dir is 512 and pSubDir can be a 255-char entry name; pick 1024
+	   so the strcat below cannot overflow even on the deepest nested
+	   ROM directories. */
+	Char dir[1024];
 
 	strcpy(dir, m_Dir);
 

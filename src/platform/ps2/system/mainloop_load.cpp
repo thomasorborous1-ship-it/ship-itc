@@ -190,7 +190,12 @@ Bool _MainLoopExecuteFile(const char *pFileName, Bool bLoadSRAM)
 	Emu::Rom *pRom = NULL;
 	Emu::System *pSystem = NULL;
 	Emu::Rom *pBios = NULL;
-	char FileName[256];
+	/* CBrowserScreen now builds paths into a 1024-byte buffer (m_Dir up
+	   to 512 + a per-entry name up to 255), so the bespoke copy that
+	   _MainLoopExecuteFile keeps for PathExtResolve()'s in-place
+	   truncation has to match that size. Otherwise a long ROM path
+	   silently overflows the old FileName[256] in strcpy() below. */
+	char FileName[1024];
 
 	if (pFileName==NULL)
 	{
@@ -198,7 +203,7 @@ Bool _MainLoopExecuteFile(const char *pFileName, Bool bLoadSRAM)
 	}
 
 	// make copy of filename
-	strcpy(FileName, pFileName);
+	snprintf(FileName, sizeof(FileName), "%s", pFileName);
 
 	// see if file exists first...
 	FILE *fp;
@@ -331,9 +336,9 @@ Bool _MainLoopExecuteFile(const char *pFileName, Bool bLoadSRAM)
 			// can't run disks unless we have the FDS Bios loaded
 			if (!pBios->IsLoaded())
 			{
-				char diskrompath[256];
+				char diskrompath[1024];
                             Char *pFileName;
-				strcpy(diskrompath, FileName);
+				snprintf(diskrompath, sizeof(diskrompath), "%s", FileName);
 				pFileName = strrchr(diskrompath, '/');
 				if (!pFileName) 
 					pFileName = strrchr(diskrompath, ':');

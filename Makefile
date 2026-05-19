@@ -487,10 +487,12 @@ iso-root: $(TARGET) iso-check
 			exit 1; \
 		fi; \
 		mkdir -p "$(ISO_ROOT_DIR)/ROMS"; \
-		find "$(roms)" -maxdepth 1 -type f \
+		( cd "$(roms)" && \
+		  find . -type f \
 			\( -iname '*.smc' -o -iname '*.sfc' -o -iname '*.swc' \
-			   -o -iname '*.fig' -o -iname '*.zip' \) \
-			-exec cp -f {} "$(ISO_ROOT_DIR)/ROMS/" \; ; \
+			   -o -iname '*.fig' -o -iname '*.nes' -o -iname '*.fds' \
+			   -o -iname 'disksys.rom' -o -iname '*.zip' -o -iname '*.gz' \) \
+			-exec cp -f --parents {} "$(ISO_ROOT_DIR)/ROMS/" \; ) ; \
 		echo "[iso-root] ROMs copiadas de $(roms)"; \
 	else \
 		echo "[iso-root] Sem ROMs (use roms=<pasta> para incluir)"; \
