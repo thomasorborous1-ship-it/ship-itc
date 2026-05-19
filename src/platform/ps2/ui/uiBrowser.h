@@ -5,7 +5,18 @@
 #include "uiScreen.h"
 #include "uiMenu.h"
 
-#define BROWSER_ENTRY_MAXCHARS (64)
+/* NAME_MAX on PS2's iomanX-backed filesystems is 255 chars (matching
+   POSIX). The original iaddis build hard-capped each entry at 64,
+   which silently truncated names like
+   "Super Mario All-Stars + Super Mario World (USA).sfc" (52 chars,
+   fits) but blew up on No-Intro / GoodSNES dumps that routinely run
+   80-120 chars. When that happened, GetEntryPath() rebuilt the path
+   with the truncated name and fopen() returned NULL, producing the
+   classic "ERROR: <path>" modal users see on long-named ROMs. 256 is
+   one byte over NAME_MAX so any single dirent fits, and the per-entry
+   cost (256 + 4 + 4 = 264 bytes) keeps a 6000-entry browser under
+   1.6 MB - well within the 32 MB EE RAM budget. */
+#define BROWSER_ENTRY_MAXCHARS (256)
 
 enum BrowserEntryTypeE
 {
