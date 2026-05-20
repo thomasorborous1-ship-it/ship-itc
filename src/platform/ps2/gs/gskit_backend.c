@@ -90,57 +90,31 @@ void GSK_Init(int width, int height,
 
     gsKit_init_screen(_pGsGlobal);
 
-    /* gsKit_init_screen has already programmed DISPLAY1/2 with its
-       own auto-computed magnification (NTSC default DW=2880, DH=480
-       gives MagH=10, MagV=1 for a 256x240 framebuffer). The original
-       SNESticle pipeline used a different convention - 1x vertical
-       and ~10x horizontal magnification, with DW=2559 and DH=h-1 -
-       which yields a noticeably different visible aspect on real TV
-       and on emulators that decode DISPLAY1 strictly (NetherSX2
-       reports the picture as oversized).
+    /* PMODE / DISPLAY1 / DISPLAY2 are now left at the values that
+       gsKit_init_screen programmed (PMODE=0x8046 with CRTMD=1,
+       DISPLAY1/2 with gsKit's auto-computed magnification). The
+       previous code re-emitted those three registers with the
+       iaddis legacy layout (PMODE=0xFF61, DW=2560, MagV=0) to
+       work around a NetherSX2-only artefact, but that combination
+       puts the PCRTC in a non-standard mode (CRTMD=0, EN1=1,
+       EN2=0) that the real PS2 silicon does not handle the same
+       way as emulators - on real hardware the picture comes up
+       small in the centre with vertical-stripe garbage around it,
+       because gsKit_sync_flip only updates DISPFB2 and DISPFB1
+       (the only one being read with EN1=1, EN2=0) is left at its
+       initial value, breaking double buffering.
 
-       Re-emit DISPLAY1/2 with the legacy register layout so the
-       picture comes out at the same scale the iaddis original used.
-       gsKit does not touch DISPLAY1/2 again after init_screen, so
-       this stays in effect. */
-    {
-        int w = width  ? width  : 256;
-        int h = height ? height : 240;
-        u64 disp_reg = (((u64)((u64)(h - 1)) << 44) |
-                        ((u64)0x9FFULL << 32) |
-                        ((u64)(((2560 + w - 1) / w) - 1) << 23) |
-                        ((u64)(dispy & 0x7FF) << 12) |
-                        ((u64)(dispx * (2560 / w)) & 0xFFFULL));
-        *((volatile u64 *)0x12000080) = disp_reg; /* DISPLAY1 */
-        *((volatile u64 *)0x120000A0) = disp_reg; /* DISPLAY2 */
-        /* Keep gsGlobal's idea of the centre roughly aligned in case
-           a future caller of gsKit_set_display_offset uses it. */
-        _pGsGlobal->StartX = dispx * (2560 / w);
-        _pGsGlobal->StartY = dispy;
-        _pGsGlobal->MagH   = ((2560 + w - 1) / w) - 1;
-        _pGsGlobal->MagV   = 0;
-        _pGsGlobal->DW     = 2560;
-        _pGsGlobal->DH     = h;
-    }
+       picodrive and Open-PS2-Loader both let gsKit handle PMODE
+       and DISPLAY entirely, and both render correctly on real
+       PS2. We follow the same pattern.
 
-    /* Re-emit PMODE with the iaddis layout (0xFF61).
-       gsKit_init_screen unconditionally programs PMODE with
-       EN1=0, EN2=1, CRTMD=1, MMOD=0, AMOD=1, SLBG=0, ALP=0x80
-       which yields 0x8046. On NetherSX2 (Patched) and other strict
-       emulators, CRTMD=1 combined with our 256x240 framebuffer
-       layout produces the same vertical-stripe / partial-frame
-       readout artefact that PR #41 fixed pre-gsKit-migration by
-       forcing PMODE=0xFF61 in GS_SetDispMode. The gsKit migration
-       removed the explicit GS_PMODE = 0xFF61 write in gs.c, which
-       silently reintroduced that regression.
-
-       0xFF61 layout: EN1=1, EN2=0, CRTMD=0, MMOD=1, AMOD=1, SLBG=0,
-       ALP=0xFF - i.e. Read Circuit 1 reads DISPFB1 with ALP=255
-       (full opacity on RC1's output), CRTMD=0 (real-PS2-silicon
-       friendly), no SLBG. gsKit sets DISPFB1 and DISPFB2 to the
-       same gsKit-managed framebuffer base, so flipping EN1<->EN2
-       does not change which texels reach the CRTC. */
-    *((volatile u64 *)0x12000000) = 0xFF61ULL; /* PMODE */
+       If the NetherSX2 visual issue resurfaces, gate the override
+       behind a build flag (e.g. -DBUILD_FOR_NETHERSX2=1) instead
+       of penalising real hardware. */
+    (void)dispx;
+    (void)dispy;
+    (void)width;
+    (void)height;
 
     /* COLCLAMP is re-emitted every frame in GSK_ResetFrame (see
        comment there). The original iaddis pipeline (gs.c) set
