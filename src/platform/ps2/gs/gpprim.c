@@ -191,6 +191,21 @@ void GPPrimUploadTexture(int TBP, int TBW, int xofs, int yofs,
         if (tbw_pages == 0) {
             tbw_pages = 1;
         }
+        /* CACHE COHERENCY: gsKit_texture_send_inline DMAs straight
+           from the EE's main RAM into VRAM. On real PS2 hardware
+           the EE has an 8KB write-back data cache that is NOT
+           snooped by the GIF/DMAC; if the caller just wrote the
+           texel buffer (e.g. font upload from FontData_04b16b,
+           emulator framebuffer blit), the freshly-written bytes
+           may still be sitting in the data cache and the DMA will
+           read stale RAM contents - producing visibly corrupted
+           textures (random tiles, scrambled font) on real PS2.
+           Emulators (PCSX2/NetherSX2) do not model the EE cache,
+           so the same code "works" there which masks the bug.
+           FlushCache(0) writes back+invalidates the EE data cache
+           so the DMA sees the actual texel data. Required before
+           every EE->VRAM transfer. */
+        FlushCache(0);
         gsKit_texture_send_inline(gs, (u32 *)tex,
                                   wpxls, hpxls,
                                   tbp_bytes, /* bytes; gsKit divides by 256 */
