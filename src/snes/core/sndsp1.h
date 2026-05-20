@@ -57,7 +57,6 @@ private:
 
     // -------- estado do barramento --------
     Uint8   m_uSR;             // byte alto do status register
-    Uint8   m_uSrLowToggle;    // emula leitura alternada do "byte baixo"
     Uint16  m_uDR;             // data register interno (16-bit)
     Uint8   m_uFsmState;
     Uint8   m_uCommand;        // opcode atual em execucao
