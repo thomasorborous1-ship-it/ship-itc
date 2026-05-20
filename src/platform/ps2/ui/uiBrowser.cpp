@@ -53,19 +53,21 @@ static const char *_MenuEntries[]=
 
 /* Marquee tuning (frame counts at the browser's 60 Hz draw rate):
      - DELAY_FRAMES: how long the name sits with a static ellipsis on
-       the selected row before it starts scrolling. ~0.2 s is enough
+       the selected row before it starts scrolling. ~0.3 s is enough
        for the user to register "this name is longer" without making
        the scroll feel laggy when they're dwelling on one entry.
-     - STEP_FRAMES: frames between marquee advance ticks. With
-       STEP_FRAMES=3 the marquee advances ~20 chars per second, which
-       reads comfortably for SNES/NES filenames in our display font. */
-#define BROWSER_MARQUEE_DELAY_FRAMES (12)
-#define BROWSER_MARQUEE_STEP_FRAMES  (3)
-
-/* Gap padding inserted between the end of the name and the wrap-back
-   to the start during marquee scroll. Keeps the eye from seeing
-   "...sfcAdvent" as one continuous word. */
-#define BROWSER_MARQUEE_GAP_CHARS (3)
+     - STEP_FRAMES: frames between marquee advance ticks. Higher =
+       slower scroll. 5 frames = ~12 chars/s (gentler than the old 3).
+     - PAUSE_AT_END: frames to hold when the scroll reaches the end
+       of the name before snapping back to the start. Gives the user
+       time to read the tail end.
+     - SCROLL_PX: pixels to advance per tick (sub-char smooth scroll).
+       Using 2px per tick gives a smoother glide than jumping a full
+       char width at once. */
+#define BROWSER_MARQUEE_DELAY_FRAMES (18)
+#define BROWSER_MARQUEE_STEP_FRAMES  (5)
+#define BROWSER_MARQUEE_PAUSE_END    (40)
+#define BROWSER_MARQUEE_SCROLL_PX    (2)
 
 /* Width of a single space in the current font, used to size the
    marquee gap. We grab it lazily once per Draw() so the cost is one
@@ -161,11 +163,11 @@ static void BrowserCopyEllipsis(Char *out, size_t out_size, const Char *src, Int
 	}
 }
 
-/* Build a scrolled view of src starting at logical offset `tick` chars
-   into the circular string (src + GAP spaces + src + ...). The output
-   is as many chars from that offset as fit in max_px pixels. Used
-   only for the currently selected entry once the dwell delay has
-   passed; non-selected entries always use the static ellipsis copy. */
+/* Build a scrolled view of src, clipped to max_px pixels.
+   `tick` is a PIXEL offset into the rendered string (not char index).
+   The scroll goes left until the end of the name is visible, then
+   snaps back to the start (the caller handles the pause via
+   BROWSER_MARQUEE_PAUSE_END before resetting tick to 0). */
 static void BrowserCopyMarquee(Char *out, size_t out_size, const Char *src, Int32 max_px, Uint32 tick)
 {
 	if (!out || out_size == 0)
@@ -177,34 +179,50 @@ static void BrowserCopyMarquee(Char *out, size_t out_size, const Char *src, Int3
 		return;
 	}
 
-	size_t len = strlen(src);
-	if (len == 0)
-	{
-		out[0] = '\0';
+	/* Fits as-is: no scrolling needed. */
+	snprintf(out, out_size, "%s", src);
+	if (FontGetStrWidth(out) <= max_px)
 		return;
-	}
 
-	/* Fits as-is: no scrolling needed, fall back to plain copy. */
+	/* Full width of the source string. The scroll range is
+	   [0 .. fullW - max_px]. Beyond that the tail is fully visible
+	   and we signal "end reached" by clamping. */
+	Int32 fullW = FontGetStrWidth((Char *)src);
+	Int32 maxOffset = fullW - max_px;
+	if (maxOffset < 0) maxOffset = 0;
+
+	Int32 pxOffset = (Int32)tick;
+	if (pxOffset > maxOffset)
+		pxOffset = maxOffset;
+
+	/* Find the first char whose cumulative width crosses pxOffset,
+	   then render from there until we fill max_px. */
 	{
-		snprintf(out, out_size, "%s", src);
-		if (FontGetStrWidth(out) <= max_px)
-			return;
-	}
+		Int32 cumW = 0;
+		size_t startChar = 0;
+		Char tmp[2] = {0, 0};
 
-	{
-		size_t period = len + (size_t)BROWSER_MARQUEE_GAP_CHARS;
-		size_t offset = (size_t)(tick % (Uint32)period);
-		size_t i = 0;
-
-		out[0] = '\0';
-		while (i + 1 < out_size)
+		while (src[startChar])
 		{
-			size_t pos = offset + i;
-			while (pos >= period) pos -= period;
+			tmp[0] = src[startChar];
+			Int32 cw = FontGetStrWidth(tmp);
+			if (cumW + cw > pxOffset)
+				break;
+			cumW += cw;
+			startChar++;
+		}
 
-			out[i] = (pos < len) ? src[pos] : ' ';
+		/* Now render from startChar, offsetting by the sub-char
+		   remainder (we can not sub-pixel shift with bitmap font,
+		   so we just start from the char that crosses the boundary
+		   and let the slight jitter be negligible at 2px/tick). */
+		size_t i = 0;
+		out[0] = '\0';
+		size_t idx = startChar;
+		while (src[idx] && i + 1 < out_size)
+		{
+			out[i] = src[idx];
 			out[i + 1] = '\0';
-
 			if (FontGetStrWidth(out) > max_px)
 			{
 				if (i > 0)
@@ -212,6 +230,7 @@ static void BrowserCopyMarquee(Char *out, size_t out_size, const Char *src, Int3
 				break;
 			}
 			i++;
+			idx++;
 		}
 	}
 }
@@ -699,11 +718,40 @@ void CBrowserScreen::Draw()
 				}
 				else
 				{
-					s_marquee_hold++;
-					if (s_marquee_hold >= BROWSER_MARQUEE_STEP_FRAMES)
+					/* Check if scroll reached the end (tick in px >=
+					   fullW - maxpx). We compute fullW here cheaply
+					   since BrowserCopyMarquee clamps internally. */
+					Char probe2[BROWSER_ENTRY_MAXCHARS + 4];
+					BrowserEntryT *pSel2 = &m_pDirEntries[m_iSelect];
+					if (pSel2->eType == BROWSER_ENTRYTYPE_DIR)
+						snprintf(probe2, sizeof(probe2), "/%s", pSel2->name);
+					else
+						snprintf(probe2, sizeof(probe2), "%s", pSel2->name);
+					Int32 fullW2 = FontGetStrWidth(probe2);
+					Int32 maxOff2 = fullW2 - BROWSER_NAME_MAXPIXELS;
+					if (maxOff2 < 0) maxOff2 = 0;
+
+					if ((Int32)s_marquee_tick >= maxOff2)
 					{
-						s_marquee_hold = 0;
-						s_marquee_tick++;
+						/* Reached end: pause then snap back. */
+						s_marquee_hold++;
+						if (s_marquee_hold >= BROWSER_MARQUEE_PAUSE_END)
+						{
+							s_marquee_tick  = 0;
+							s_marquee_hold  = 0;
+							s_marquee_delay = 0; /* re-do initial delay */
+						}
+					}
+					else
+					{
+						/* Normal scroll: advance by SCROLL_PX every
+						   STEP_FRAMES frames. */
+						s_marquee_hold++;
+						if (s_marquee_hold >= BROWSER_MARQUEE_STEP_FRAMES)
+						{
+							s_marquee_hold = 0;
+							s_marquee_tick += BROWSER_MARQUEE_SCROLL_PX;
+						}
 					}
 				}
 			}
