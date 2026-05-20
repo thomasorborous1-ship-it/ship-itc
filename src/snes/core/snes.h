@@ -25,7 +25,7 @@ extern "C" {
 #define SNES_RAMSIZE  0x20000
 #define SNES_SRAMSIZE (256 * 1024)
 
-#define SNES_DSP1 (CODE_PLATFORM==CODE_WIN32)
+#define SNES_DSP1 1
 
 class SnesSystem : public Emu::System
 {

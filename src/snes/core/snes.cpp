@@ -642,12 +642,16 @@ Uint8 SNCPU_TRAPFUNC SnesSystem::ReadDSP1(SNCpuT *pCpu, Uint32 uAddr)
 {
 	SnesSystem *pSnes = (SnesSystem *)pCpu->pUserData;
 
-	switch (uAddr & 0xF000)
+	switch (uAddr & 0xE000)
 	{
 	case 0x6000:
-		return pSnes->m_pDsp->ReadData(uAddr & 0xFFF);
+	case 0x8000:
+	case 0xA000:
+		return pSnes->m_pDsp->ReadData(uAddr);
 	case 0x7000:
-		return pSnes->m_pDsp->ReadStatus(uAddr & 0xFFF);
+	case 0xC000:
+	case 0xE000:
+		return pSnes->m_pDsp->ReadStatus(uAddr);
 	}
 #if SNES_DEBUG
     if (Snes_bDebugUnhandledIO)
@@ -661,10 +665,12 @@ void SNCPU_TRAPFUNC SnesSystem::WriteDSP1(SNCpuT *pCpu, Uint32 uAddr, Uint8 uDat
 {
 	SnesSystem *pSnes = (SnesSystem *)pCpu->pUserData;
 
-	switch (uAddr & 0xF000)
+	switch (uAddr & 0xE000)
 	{
 	case 0x6000:
-		pSnes->m_pDsp->WriteData(uAddr & 0xFFF, uData);
+	case 0x8000:
+	case 0xA000:
+		pSnes->m_pDsp->WriteData(uAddr, uData);
 		break;
 	default:
 		// ??

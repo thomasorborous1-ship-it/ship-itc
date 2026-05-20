@@ -85,6 +85,18 @@ static SnesMemMapT	_SnesMemMap_HiRom_DSP1[]=
 #endif
 
 
+#if SNES_DSP1
+static SnesMemMapT _SnesMemMap_LoRom_DSP1[]={
+    {0x20,0x3F,0x8000,0xBFFF,SNCPU_CYCLE_FAST,SNESMEM_TYPE_DSP1},
+    {0xA0,0xBF,0x8000,0xBFFF,SNCPU_CYCLE_FAST,SNESMEM_TYPE_DSP1},
+    /* SR (Status Register): $20-$3F:C000-FFFF + mirror $A0-$BF
+       Sem isto a CPU le ROM em vez do status e o DSP-1 trava */
+    {0x20,0x3F,0xC000,0xFFFF,SNCPU_CYCLE_FAST,SNESMEM_TYPE_DSP1},
+    {0xA0,0xBF,0xC000,0xFFFF,SNCPU_CYCLE_FAST,SNESMEM_TYPE_DSP1},
+    {0,0,0,0,SNESMEM_TYPE_NONE}
+};
+#endif
+
 void SnesSystem::MapMem(SnesMemMapT *pMemMap)
 {
 	SNCpuT *pCpu = &m_Cpu;
@@ -238,6 +250,10 @@ void SnesSystem::MapMem(SNRomMappingE eRomMapping, Uint32 uFlags)
 		// mode 20h
 		case SNROM_MAPPING_LOROM:
 			MapMem(_SnesMemMap_LoRom);
+
+#if SNES_DSP1
+			if (uFlags & SNROM_FLAG_DSP1) { MapMem(_SnesMemMap_LoRom_DSP1); m_pDsp = &m_DSP1; }
+#endif
 			break;
 
 		// mode 21h
