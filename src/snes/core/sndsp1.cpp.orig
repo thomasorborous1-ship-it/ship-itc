@@ -1,0 +1,700 @@
+/*
+ * sndsp1.cpp - DSP-1 / DSP-1B coprocessor (clean-room)
+ *
+ * Implementacao a partir do zero, baseada apenas em documentacao publica:
+ *   - https://snes.nesdev.org/wiki/DSP-1
+ *   - https://www.sneslab.net/wiki/DSP-1  e subpaginas (Multiply, Triangle,
+ *     Rotate, Polar, Inverse, Range, Distance, Radius, Project, Parameter,
+ *     Raster, Target, Attitude, Subjective, Objective, Scalar, Gyrate).
+ *   - SNES Development Manual Book II, capitulo 3-5 (citado nas paginas
+ *     acima) - usado apenas para nomear entradas/saidas; nao foi consultado
+ *     codigo de bsnes/snes9x/etc.
+ *   - Matematica de projecao pinhole em plano-chao (textbook 3D graphics).
+ *
+ * Convencoes de ponto fixo:
+ *   T  = signed 1.15   (-1.0 .. 0.999969)   - representa cos/sin/coef.
+ *   I  = signed 16-bit -32768 .. 32767      - inteiro
+ *   I8 = signed 8.8                          - inteiro com 8 bits de fracao
+ *   A  = angulo, 0..65535 = 0..360 graus
+ */
+#include "types.h"
+#include "sndsp1.h"
+#include <string.h>
+#include <math.h>
+
+#ifndef M_PI
+#define M_PI 3.14159265358979323846
+#endif
+
+/* ------------------------------------------------------------------------
+ * Helpers de ponto fixo
+ * ----------------------------------------------------------------------*/
+static Int16 g_SinTab[256];   // sin(angle) em 1.15, indexado pelos 8 MSB
+static Int16 g_CosTab[256];
+
+static void DSP1_BuildTables(void)
+{
+    for (int i = 0; i < 256; i++) {
+        double a = (i / 256.0) * 2.0 * M_PI;
+        double s = sin(a) * 32767.0;
+        double c = cos(a) * 32767.0;
+        if (s >  32767.0) s =  32767.0;
+        if (s < -32768.0) s = -32768.0;
+        if (c >  32767.0) c =  32767.0;
+        if (c < -32768.0) c = -32768.0;
+        g_SinTab[i] = (Int16)s;
+        g_CosTab[i] = (Int16)c;
+    }
+}
+
+static inline Int16 DSP1_Sin(Int16 angle)
+{
+    // os 8 bits superiores do angulo enderecam a tabela
+    return g_SinTab[(Uint8)((Uint16)angle >> 8)];
+}
+static inline Int16 DSP1_Cos(Int16 angle)
+{
+    return g_CosTab[(Uint8)((Uint16)angle >> 8)];
+}
+
+// multiplicacao 1.15 x 1.15 -> 1.15 (com round-to-nearest)
+static inline Int16 DSP1_Mul15(Int32 a, Int32 b)
+{
+    Int32 r = (a * b + 0x4000) >> 15;
+    if (r >  32767) r =  32767;
+    if (r < -32768) r = -32768;
+    return (Int16)r;
+}
+
+// raiz quadrada inteira (Newton)
+static Uint16 DSP1_Sqrt32(Uint32 n)
+{
+    if (!n) return 0;
+    Uint32 x = n;
+    if (x > 0xFFFFu) x = 0xFFFFu;
+    Uint32 y = (x + (n / (x ? x : 1))) >> 1;
+    for (int i = 0; i < 8 && y != x; i++) {
+        x = y;
+        y = (x + n / x) >> 1;
+    }
+    return (Uint16)x;
+}
+
+// reciproco "float" do DSP-1: dado (coef, exp) tal que valor = coef * 2^exp
+// devolve (coef', exp') aproximando 1 / valor.
+// Coeficiente em formato 1.15 com sinal.
+static void DSP1_FloatInv(Int16 coef, Int16 exp, Int16 *oCoef, Int16 *oExp)
+{
+    if (coef == 0) {
+        // saturacao positiva
+        *oCoef = 0x7FFF;
+        *oExp  = 0x7FFF;
+        return;
+    }
+
+    Int32 abs_c = (coef < 0) ? -coef : coef;
+    // queremos abs_c em [0x4000, 0x7FFF] -> shift para a esquerda ate normalizar
+    Int32 shift = 0;
+    while (abs_c < 0x4000) { abs_c <<= 1; shift++; }
+
+    // 1/abs_c em 0.30 = (1<<30) / abs_c
+    Int32 rec = (Int32)((1u << 30) / (Uint32)abs_c);
+    if (rec > 0x7FFF) rec = 0x7FFF;   // saturacao do coeficiente
+
+    *oCoef = (Int16)((coef < 0) ? -rec : rec);
+    *oExp  = (Int16)(-exp - 15 + shift);
+}
+
+/* ------------------------------------------------------------------------
+ * Tabela de tamanhos (entrada,saida) em PALAVRAS de 16 bits para cada
+ * opcode. Baseada na DSP1 Command Matrix do superfamicom.org wiki e
+ * sneslab.net. Comandos com sufixo B/C reusam o mesmo tamanho do A.
+ * ----------------------------------------------------------------------*/
+struct DSP1CmdSize { Uint8 nIn, nOut; };
+static const DSP1CmdSize DSP1_Sizes[0x40] = {
+//   x0 x1 x2 x3 x4 x5 x6 x7 x8 x9 xA xB xC xD xE xF
+/*0x*/{2,1},{4,0},{7,4},{0,4},{2,2},{0,0},{3,3},{0,0},{3,2},{1,1},{1,4},{3,3},{3,2},{0,0},{2,2},{0,0},
+/*1x*/{2,2},{4,0},{0,0},{0,4},{0,0},{2,1},{0,0},{0,0},{4,1},{0,0},{1,4},{3,3},{0,0},{0,0},{6,3},{0,0},
+/*2x*/{0,0},{4,0},{0,0},{0,4},{0,0},{2,1},{0,0},{0,0},{3,1},{0,0},{1,4},{3,3},{0,0},{0,0},{0,0},{0,0},
+/*3x*/{0,0},{0,0},{0,0},{0,0},{0,0},{0,0},{0,0},{0,0},{0,0},{0,0},{0,0},{0,0},{0,0},{0,0},{0,0},{1,0},
+};
+
+/* ----------------------------------------------------------------------*/
+static SNDSP1 *g_pDSP1 = NULL;
+
+SNDSP1::SNDSP1()
+{
+    g_pDSP1 = this;
+    DSP1_BuildTables();
+    Reset();
+}
+
+SNDSP1 *SNDSP1::GetInstance() { return g_pDSP1; }
+
+void SNDSP1::Reset()
+{
+    m_ePhase    = PHASE_CMD;
+    m_uCmd      = 0;
+    m_uInBytes  = 0;
+    m_uOutBytes = 0;
+    m_uInSize   = 0;
+    m_uOutSize  = 0;
+    memset(m_InData,  0, sizeof(m_InData));
+    memset(m_OutData, 0, sizeof(m_OutData));
+
+    // matrizes de atitude = identidade
+    memset(m_Att, 0, sizeof(m_Att));
+    for (int b = 0; b < 3; b++) {
+        m_Att[b][0][0] = m_Att[b][1][1] = m_Att[b][2][2] = 0x7FFF;
+        m_AttScale[b] = 0x7FFF;
+    }
+
+    // camera neutra
+    m_Fx = m_Fy = m_Fz = 0;
+    m_Lfe = m_Les = 0x4000;
+    m_Aas = m_Azs = 0;
+    m_Vof = 0;
+    m_Vva = 224;
+    m_Cx  = 0;
+    m_Cy  = 0;
+    m_SinAas = 0; m_CosAas = 0x7FFF;
+    m_SinAzs = 0; m_CosAzs = 0x7FFF;
+}
+
+/* ------------------------------------------------------------------------
+ * Comandos individuais
+ *
+ * Os comentarios citam apenas a documentacao publica usada.
+ * ----------------------------------------------------------------------*/
+
+// Op00 Multiply: M = (K * I) >> 15
+//   Ref: sneslab.net/wiki/DSP1/Multiply
+static void Cmd_Multiply(Int16 *in, Int16 *out)
+{
+    out[0] = DSP1_Mul15(in[0], in[1]);
+}
+
+// Op04 Triangle: S = r*sin(t)   C = r*cos(t)
+//   Ref: sneslab.net/wiki/DSP1/Triangle ; saidas T/I
+static void Cmd_Triangle(Int16 *in, Int16 *out)
+{
+    Int16 t = in[0];
+    Int16 r = in[1];
+    out[0] = DSP1_Mul15(r, DSP1_Sin(t));   // S
+    out[1] = DSP1_Mul15(r, DSP1_Cos(t));   // C
+}
+
+// Op08 Radius: |V|^2 = X^2 + Y^2 + Z^2  -> (L2, H2) inteiro 32-bit
+//   Ref: snes.nesdev.org/wiki/DSP-1
+static void Cmd_Radius(Int16 *in, Int16 *out)
+{
+    Int32 X = in[0], Y = in[1], Z = in[2];
+    Int32 r2hi, r2lo;
+    Int64 s = (Int64)X*X + (Int64)Y*Y + (Int64)Z*Z;
+    r2lo = (Int32)(s & 0xFFFFu);
+    r2hi = (Int32)((s >> 16) & 0xFFFFu);
+    out[0] = (Int16)r2lo;
+    out[1] = (Int16)r2hi;
+}
+
+// Op0C Rotate: rotaciona (x1,y1) por t (Z anti-horario)
+//   x2 =  x1*cos(t) - y1*sin(t)
+//   y2 =  x1*sin(t) + y1*cos(t)
+//   Ref: sneslab.net/wiki/DSP1/Rotate
+static void Cmd_Rotate(Int16 *in, Int16 *out)
+{
+    Int16 t = in[0];
+    Int16 x = in[1];
+    Int16 y = in[2];
+    Int16 c = DSP1_Cos(t);
+    Int16 s = DSP1_Sin(t);
+    out[0] = (Int16)(((Int32)x*c - (Int32)y*s) >> 15);
+    out[1] = (Int16)(((Int32)x*s + (Int32)y*c) >> 15);
+}
+
+// Op10 Float Inverse: 1 / (Mi * 2^Ci) = Mo * 2^Co
+//   Ref: snes.nesdev.org/wiki/DSP-1 ("Float Inverse")
+static void Cmd_Inverse(Int16 *in, Int16 *out)
+{
+    DSP1_FloatInv(in[0], in[1], &out[0], &out[1]);
+}
+
+// Op18 Range: |V|^2 - R^2
+//   Ref: snes.nesdev.org/wiki/DSP-1
+static void Cmd_Range(Int16 *in, Int16 *out)
+{
+    Int32 X = in[0], Y = in[1], Z = in[2], R = in[3];
+    Int64 s = (Int64)X*X + (Int64)Y*Y + (Int64)Z*Z - (Int64)R*R;
+    // resultado em H2 (parte alta de double-int) -> top 16 bits
+    out[0] = (Int16)((s >> 16) & 0xFFFFu);
+}
+
+// Op28 Distance: sqrt(X^2+Y^2+Z^2)
+static void Cmd_Distance(Int16 *in, Int16 *out)
+{
+    Int32 X = in[0], Y = in[1], Z = in[2];
+    Uint32 s = (Uint32)((Int64)X*X + (Int64)Y*Y + (Int64)Z*Z);
+    out[0] = (Int16)DSP1_Sqrt32(s);
+}
+
+// Op1C Polar: rotacao 3D (yaw, pitch, roll) aplicada a (X,Y,Z)
+//   Saida = Rz(t1) * Ry(t2) * Rx(t3) * (X,Y,Z)
+//   Ref: snes.nesdev.org/wiki/DSP-1 (matrizes mostradas la)
+static void Cmd_Polar(Int16 *in, Int16 *out)
+{
+    Int16 tx = in[0], ty = in[1], tz = in[2];
+    Int32 X  = in[3], Y  = in[4], Z  = in[5];
+
+    Int16 cx = DSP1_Cos(tx), sx = DSP1_Sin(tx);
+    Int16 cy = DSP1_Cos(ty), sy = DSP1_Sin(ty);
+    Int16 cz = DSP1_Cos(tz), sz = DSP1_Sin(tz);
+
+    // Rx
+    Int32 y1 = ((Int32)cx*Y - (Int32)sx*Z) >> 15;
+    Int32 z1 = ((Int32)sx*Y + (Int32)cx*Z) >> 15;
+    Int32 x1 = X;
+
+    // Ry
+    Int32 x2 = ((Int32)cy*x1 + (Int32)sy*z1) >> 15;
+    Int32 z2 = (-(Int32)sy*x1 + (Int32)cy*z1) >> 15;
+    Int32 y2 = y1;
+
+    // Rz
+    Int32 x3 = ((Int32)cz*x2 - (Int32)sz*y2) >> 15;
+    Int32 y3 = ((Int32)sz*x2 + (Int32)cz*y2) >> 15;
+
+    if (x3 >  32767) x3 =  32767;
+    if (x3 < -32768) x3 = -32768;
+    if (y3 >  32767) y3 =  32767;
+    if (y3 < -32768) y3 = -32768;
+    if (z2 >  32767) z2 =  32767;
+    if (z2 < -32768) z2 = -32768;
+    out[0] = (Int16)x3;
+    out[1] = (Int16)y3;
+    out[2] = (Int16)z2;
+}
+
+/* ------------------------------------------------------------------------
+ * Comandos Mode-7  -  derivados de projecao pinhole em plano-chao
+ *
+ * Tres comandos cooperam:
+ *   Op02 Parameter : seta a camera (posicao, atitude, focal)
+ *   Op06 Project   : projeta um ponto 3D para a tela
+ *   Op0A Raster    : devolve a matriz A/B/C/D do Mode-7 para cada linha
+ *
+ * As equacoes usadas sao as classicas de camera pinhole olhando um
+ * plano (referencia: qualquer livro de Computer Graphics, ex. Foley/van
+ * Dam, capitulo de projecoes). Nao foram extraidas de bsnes/snes9x.
+ *
+ * NOTA: o DSP-1 real produz valores fixed-point com coeficientes
+ * calibrados pelo firmware da Nintendo. Esta implementacao chega no
+ * mesmo "shape" matematico mas pode precisar de afinacao de escala
+ * para casar exatamente com o que cada jogo espera.
+ * ----------------------------------------------------------------------*/
+
+void SNDSP1::Execute()
+{
+    Uint8 cmd = m_uCmd & 0x3F;
+
+    switch (cmd)
+    {
+    case 0x00: case 0x14:   // Multiply
+        Cmd_Multiply(m_InData, m_OutData);
+        break;
+
+    case 0x04:              // Triangle
+        Cmd_Triangle(m_InData, m_OutData);
+        break;
+
+    case 0x08:              // Radius
+        Cmd_Radius(m_InData, m_OutData);
+        break;
+
+    case 0x0C:              // Rotate (2D)
+        Cmd_Rotate(m_InData, m_OutData);
+        break;
+
+    case 0x10:              // Float Inverse
+        Cmd_Inverse(m_InData, m_OutData);
+        break;
+
+    case 0x18: case 0x25:   // Range / RangeB
+        Cmd_Range(m_InData, m_OutData);
+        break;
+
+    case 0x1C:              // Polar (3D rotate)
+        Cmd_Polar(m_InData, m_OutData);
+        break;
+
+    case 0x28:              // Distance
+        Cmd_Distance(m_InData, m_OutData);
+        break;
+
+    /* ---------------------------------------------------------------
+     * Op01/11/21 Attitude A/B/C
+     *   In: m (scale), x, y, z (angles em A)
+     *   Out: nada (matriz salva internamente)
+     * Constroi a matriz de rotacao 3D do banco selecionado.
+     * --------------------------------------------------------------- */
+    case 0x01: case 0x11: case 0x21: {
+        int bank = (cmd >> 4) & 3;
+        Int16 m  = m_InData[0];
+        Int16 tx = m_InData[1];
+        Int16 ty = m_InData[2];
+        Int16 tz = m_InData[3];
+        m_AttScale[bank] = m;
+        Int16 cx = DSP1_Cos(tx), sx = DSP1_Sin(tx);
+        Int16 cy = DSP1_Cos(ty), sy = DSP1_Sin(ty);
+        Int16 cz = DSP1_Cos(tz), sz = DSP1_Sin(tz);
+        // R = Rz * Ry * Rx
+        // linha 0
+        m_Att[bank][0][0] = DSP1_Mul15(cy, cz);
+        m_Att[bank][0][1] = (Int16)(((Int32)DSP1_Mul15(sx, sy)*cz
+                                     - (Int32)cx*sz) >> 15);
+        m_Att[bank][0][2] = (Int16)(((Int32)DSP1_Mul15(cx, sy)*cz
+                                     + (Int32)sx*sz) >> 15);
+        // linha 1
+        m_Att[bank][1][0] = DSP1_Mul15(cy, sz);
+        m_Att[bank][1][1] = (Int16)(((Int32)DSP1_Mul15(sx, sy)*sz
+                                     + (Int32)cx*cz) >> 15);
+        m_Att[bank][1][2] = (Int16)(((Int32)DSP1_Mul15(cx, sy)*sz
+                                     - (Int32)sx*cz) >> 15);
+        // linha 2
+        m_Att[bank][2][0] = (Int16)-sy;
+        m_Att[bank][2][1] = DSP1_Mul15(sx, cy);
+        m_Att[bank][2][2] = DSP1_Mul15(cx, cy);
+        break;
+    }
+
+    /* ---------------------------------------------------------------
+     * Op03/13/23 Subjective A/B/C  -  X' = M * (X * scale)
+     *   In: x, y, z
+     *   Out: x', y', z'
+     * --------------------------------------------------------------- */
+    case 0x03: case 0x13: case 0x23: {
+        int bank = (cmd >> 4) & 3;
+        Int32 X = (Int32)DSP1_Mul15(m_InData[0], m_AttScale[bank]);
+        Int32 Y = (Int32)DSP1_Mul15(m_InData[1], m_AttScale[bank]);
+        Int32 Z = (Int32)DSP1_Mul15(m_InData[2], m_AttScale[bank]);
+        for (int i = 0; i < 3; i++) {
+            Int32 v = (m_Att[bank][i][0]*X
+                     + m_Att[bank][i][1]*Y
+                     + m_Att[bank][i][2]*Z) >> 15;
+            if (v >  32767) v =  32767;
+            if (v < -32768) v = -32768;
+            m_OutData[i] = (Int16)v;
+        }
+        // saida e' 3 palavras mas a tabela diz 4 (a 4a e' typicamente lixo)
+        m_OutData[3] = 0;
+        break;
+    }
+
+    /* ---------------------------------------------------------------
+     * Op0B/1B/2B Objective A/B/C  -  X' = M^T * X / scale
+     * --------------------------------------------------------------- */
+    case 0x0B: case 0x1B: case 0x2B: {
+        int bank = (cmd >> 4) & 3;
+        Int32 X = m_InData[0], Y = m_InData[1], Z = m_InData[2];
+        Int16 inv = (m_AttScale[bank] != 0) ? (Int16)((Int32)0x7FFF * 0x7FFF
+                                                       / m_AttScale[bank])
+                                            : (Int16)0x7FFF;
+        for (int i = 0; i < 3; i++) {
+            Int32 v = (m_Att[bank][0][i]*X
+                     + m_Att[bank][1][i]*Y
+                     + m_Att[bank][2][i]*Z) >> 15;
+            v = ((Int32)v * inv) >> 15;
+            if (v >  32767) v =  32767;
+            if (v < -32768) v = -32768;
+            m_OutData[i] = (Int16)v;
+        }
+        break;
+    }
+
+    /* ---------------------------------------------------------------
+     * Op02 Parameter
+     *   In: Fx, Fy, Fz, Lfe, Les, Aas, Azs
+     *   Out: Vof, Vva, Cx, Cy
+     * --------------------------------------------------------------- */
+    case 0x02: {
+        m_Fx  = m_InData[0];
+        m_Fy  = m_InData[1];
+        m_Fz  = m_InData[2];
+        m_Lfe = m_InData[3];
+        m_Les = m_InData[4];
+        m_Aas = m_InData[5];
+        m_Azs = m_InData[6];
+
+        m_SinAas = DSP1_Sin(m_Aas);
+        m_CosAas = DSP1_Cos(m_Aas);
+        m_SinAzs = DSP1_Sin(m_Azs);
+        m_CosAzs = DSP1_Cos(m_Azs);
+
+        // Centro da tela em coordenadas BG e' a posicao do foco
+        // projetada no plano-chao alinhado com o yaw atual.
+        m_Cx = m_Fx;
+        m_Cy = m_Fz;
+
+        // Linha do horizonte:  Vof aproxima o offset de scanline onde o
+        // raio horizontal da camera cruza a tela.
+        //   Vof ~ -Les * tan(Aas)   (negativo => horizonte sobe a tela)
+        Int32 tanA = (m_CosAas != 0) ? ((Int32)m_SinAas * 0x7FFF) / m_CosAas
+                                     : 0x7FFF;
+        m_Vof = (Int16)(-((Int32)m_Les * tanA) >> 15);
+
+        // numero de scanlines abaixo do horizonte ate o limite inferior
+        // da tela (224 = altura visivel padrao)
+        m_Vva = (Int16)(224 - m_Vof);
+        if (m_Vva < 1)    m_Vva = 1;
+        if (m_Vva > 224)  m_Vva = 224;
+
+        m_OutData[0] = m_Vof;
+        m_OutData[1] = m_Vva;
+        m_OutData[2] = m_Cx;
+        m_OutData[3] = m_Cy;
+        break;
+    }
+
+    /* ---------------------------------------------------------------
+     * Op06 Project
+     *   In: X, Y, Z (mundo)
+     *   Out: H, V, M (tela H,V e enlargement ratio)
+     * --------------------------------------------------------------- */
+    case 0x06: {
+        // espaco-camera = R^T * (P - Foco), onde R = Rx(Aas)*Rz(Azs)
+        Int32 dx = (Int32)m_InData[0] - m_Fx;
+        Int32 dy = (Int32)m_InData[1] - m_Fy;
+        Int32 dz = (Int32)m_InData[2] - m_Fz;
+
+        // primeiro: roda em -Azs (yaw inverso)
+        Int32 xc = ( m_CosAzs * dx + m_SinAzs * dz) >> 15;
+        Int32 zc = (-m_SinAzs * dx + m_CosAzs * dz) >> 15;
+        Int32 yc = dy;
+
+        // depois: roda em -Aas (pitch inverso)
+        Int32 y2 = ( m_CosAas * yc + m_SinAas * zc) >> 15;
+        Int32 z2 = (-m_SinAas * yc + m_CosAas * zc) >> 15;
+
+        // perspectiva: H = Les * xc / z2 ; V = Les * y2 / z2
+        Int16 H, V, M;
+        if (z2 > 0) {
+            H = (Int16)(((Int32)m_Les * xc) / z2);
+            V = (Int16)(((Int32)m_Les * y2) / z2);
+            // enlargement em 8.8: M ~ Les / z2
+            Int32 m = ((Int32)m_Les << 8) / z2;
+            if (m >  32767) m =  32767;
+            if (m < -32768) m = -32768;
+            M = (Int16)m;
+        } else {
+            // atras da camera -> joga pra fora da tela
+            H = (Int16)0x7FFF;
+            V = (Int16)0x7FFF;
+            M = 0;
+        }
+        m_OutData[0] = H;
+        m_OutData[1] = V;
+        m_OutData[2] = M;
+        break;
+    }
+
+    /* ---------------------------------------------------------------
+     * Op0A/1A/2A Raster   (Mode 7 affine matrix por scanline)
+     *   In: Vs  - linha de varredura corrente
+     *   Out: An, Bn, Cn, Dn
+     *
+     * Para uma camera pinhole olhando um plano-chao (y=0) com altura
+     * Fy, pitch Aas e yaw Azs:
+     *
+     *   d(Vs) = (Fy * Les) / max(Vs - Vof, 1)    distancia ate o solo
+     *   s     = d / Les                          unidades-de-mundo/pixel
+     *
+     * A matriz Mode-7 (formato 8.8 signed) e' a transformacao afim que
+     * leva (sx,sy) na tela em (wx,wy) no BG:
+     *      |An Bn| = |  s*cos(Azs)   s*sin(Azs) |
+     *      |Cn Dn|   | -s*sin(Azs)   s*cos(Azs) |
+     *
+     * As saidas saem em 8.8, range util ~ +/-127.0.
+     * --------------------------------------------------------------- */
+    case 0x0A: case 0x1A: case 0x2A: {
+        Int16 Vs = m_InData[0];
+        Int32 below = (Int32)Vs - m_Vof;
+        if (below < 1) below = 1;
+
+        // s_q15 = (Fy / below) em 1.15 (assumindo Fy < below*range)
+        Int32 num = (Int32)m_Fy;
+        if (num < 0) num = -num;
+        Int32 s_q15 = (num << 15) / (below ? below : 1);
+        if (m_Fy < 0) s_q15 = -s_q15;
+        if (s_q15 >  32767) s_q15 =  32767;
+        if (s_q15 < -32768) s_q15 = -32768;
+
+        // converte s para 8.8 (Mode-7) - escala por Les
+        // Les e' ~0x4000 (=2.0 em 1.15? na verdade armazenamos cru)
+        Int32 scaleW = ((Int32)s_q15 * 0x100) >> 15;   // 8.8
+
+        Int32 cZ = m_CosAzs;
+        Int32 sZ = m_SinAzs;
+        // converter cos/sin (1.15) para 8.8: x_q88 = (x_q15 * 256) >> 15
+        Int32 cZ88 = (cZ * 0x100) >> 15;
+        Int32 sZ88 = (sZ * 0x100) >> 15;
+
+        Int32 A =  (scaleW * cZ88) >> 8;
+        Int32 B =  (scaleW * sZ88) >> 8;
+        Int32 C = -(scaleW * sZ88) >> 8;
+        Int32 D =  (scaleW * cZ88) >> 8;
+
+        // clamp para 16-bit signed
+        if (A >  32767) A =  32767;
+        if (A < -32768) A = -32768;
+        if (B >  32767) B =  32767;
+        if (B < -32768) B = -32768;
+        if (C >  32767) C =  32767;
+        if (C < -32768) C = -32768;
+        if (D >  32767) D =  32767;
+        if (D < -32768) D = -32768;
+
+        m_OutData[0] = (Int16)A;
+        m_OutData[1] = (Int16)B;
+        m_OutData[2] = (Int16)C;
+        m_OutData[3] = (Int16)D;
+        break;
+    }
+
+    /* ---------------------------------------------------------------
+     * Op0E Target
+     *   In: H, V (posicao na tela)
+     *   Out: X, Y (posicao no mundo, plano-chao)
+     * Inverte Op06 para o plano y=0.
+     * --------------------------------------------------------------- */
+    case 0x0E: {
+        Int16 H = m_InData[0];
+        Int16 V = m_InData[1] - m_Vof;
+        if (V <= 0) V = 1;
+
+        // raio: dir-camera = (H, -Les*sin(Aas)+V*cos(Aas), Les*cos(Aas)+V*sin(Aas))
+        Int32 dirx = H;
+        Int32 diry = ((Int32)-m_Les*m_SinAas + (Int32)V*m_CosAas) >> 15;
+        Int32 dirz = ((Int32) m_Les*m_CosAas + (Int32)V*m_SinAas) >> 15;
+
+        // intersecao com y=0:  t = -Fy / diry
+        if (diry == 0) diry = 1;
+        Int32 t = (-(Int32)m_Fy << 8) / diry;   // 8.8 fixo
+
+        Int32 wx = ((Int32)dirx * t) >> 8;
+        Int32 wz = ((Int32)dirz * t) >> 8;
+
+        // de volta para o mundo (rotaciona em +Azs e soma camera)
+        Int32 X = (( m_CosAzs * wx - m_SinAzs * wz) >> 15) + m_Fx;
+        Int32 Y = (( m_SinAzs * wx + m_CosAzs * wz) >> 15) + m_Fz;
+
+        if (X >  32767) X =  32767;
+        if (X < -32768) X = -32768;
+        if (Y >  32767) Y =  32767;
+        if (Y < -32768) Y = -32768;
+        m_OutData[0] = (Int16)X;
+        m_OutData[1] = (Int16)Y;
+        break;
+    }
+
+    /* ---------------------------------------------------------------
+     * Op3F Reset
+     * --------------------------------------------------------------- */
+    case 0x3F:
+        Reset();
+        return;
+
+    default:
+        // comando nao implementado: zera a saida segundo a tabela
+        for (int i = 0; i < m_uOutSize / 2; i++) m_OutData[i] = 0;
+        break;
+    }
+
+    // entra em fase OUTPUT se houver saida
+    if (m_uOutSize > 0) {
+        m_ePhase    = PHASE_OUT;
+        m_uOutBytes = 0;
+    } else {
+        m_ePhase    = PHASE_CMD;
+    }
+}
+
+/* ------------------------------------------------------------------------
+ * Interface de barramento
+ *
+ * O chip e' visto como duas faixas de enderecos pelo mapeamento:
+ *    DR ($x8000-$xBFFF em LoROM, $x6000-$x7FFF em HiROM)
+ *    SR ($xC000-$xFFFF em LoROM, $x7000-$x7FFF em HiROM)
+ * Mas o byte transmitido NAO depende do endereco - e um stream linear.
+ * ----------------------------------------------------------------------*/
+void SNDSP1::WriteData(Uint32 /*uAddr*/, Uint8 uData)
+{
+    if (m_ePhase == PHASE_OUT) {
+        // CPU descartou os outputs e ja' esta' escrevendo o proximo
+        // comando - aceita esse byte como novo opcode.
+        m_ePhase = PHASE_CMD;
+    }
+
+    if (m_ePhase == PHASE_CMD) {
+        m_uCmd = uData;
+        Uint8 inWords = DSP1_Sizes[m_uCmd & 0x3F].nIn;
+        m_uInSize     = (Uint8)(inWords * 2);
+        m_uOutSize    = (Uint8)(DSP1_Sizes[m_uCmd & 0x3F].nOut * 2);
+        m_uInBytes    = 0;
+        m_uOutBytes   = 0;
+        if (m_uInSize == 0) {
+            Execute();      // comando sem inputs (ex.: Reset)
+        } else {
+            m_ePhase = PHASE_IN;
+        }
+        return;
+    }
+
+    if (m_ePhase == PHASE_IN) {
+        Uint8 wordIdx = m_uInBytes >> 1;
+        if (wordIdx >= 16) wordIdx = 15;     // proteca' o buffer
+        if (m_uInBytes & 1) {
+            // MSB chegando: completa a palavra
+            Uint16 w = (Uint16)m_InData[wordIdx];
+            w = (w & 0x00FF) | ((Uint16)uData << 8);
+            m_InData[wordIdx] = (Int16)w;
+        } else {
+            // LSB
+            Uint16 w = (Uint16)m_InData[wordIdx];
+            w = (w & 0xFF00) | uData;
+            m_InData[wordIdx] = (Int16)w;
+        }
+        m_uInBytes++;
+        if (m_uInBytes >= m_uInSize) {
+            Execute();
+        }
+    }
+}
+
+Uint8 SNDSP1::ReadData(Uint32 /*uAddr*/)
+{
+    if (m_ePhase != PHASE_OUT) {
+        // sem dados: o chip real devolve o ultimo byte no DR.
+        return 0xFF;
+    }
+    Uint8 wordIdx = m_uOutBytes >> 1;
+    Uint16 w = (Uint16)m_OutData[wordIdx];
+    Uint8 b = (m_uOutBytes & 1) ? (Uint8)(w >> 8) : (Uint8)(w & 0xFF);
+    m_uOutBytes++;
+    if (m_uOutBytes >= m_uOutSize) {
+        // terminou: volta para CMD
+        m_ePhase   = PHASE_CMD;
+        m_uOutSize = 0;
+    }
+    return b;
+}
+
+Uint8 SNDSP1::ReadStatus(Uint32 /*uAddr*/)
+{
+    // SR.bit7 = DRC (Data Request) = 1 quando o chip esta' pronto.
+    // Para emulacao instantanea, ele esta' sempre pronto:
+    //   - aguardando comando        -> 0x80
+    //   - aguardando bytes input    -> 0x80
+    //   - tem output disponivel     -> 0x80 (chip aceita leitura)
+    // Bit 6 (DRS) indica direcao: 1 = chip->CPU.
+    if (m_ePhase == PHASE_OUT) return 0xC0;
+    return 0x80;
+}
