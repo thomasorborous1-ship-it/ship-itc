@@ -303,7 +303,11 @@ static Int16 DSP1_Sin(Int16 iAngle)
 static Int16 DSP1_Cos(Int16 iAngle)
 {
     if (iAngle < 0) {
-        if (iAngle == -32768) return -32768;
+        // cos(-180) = cos(180) = -1.  Em Q15, -1 deve ser -32767
+        // (0x8001), nao -32768 (0x8000).  Usar -32768 estoura
+        // multiplicacoes (Int32)X * (-32768) e produz saturacao
+        // assimetrica com sinal incorreto.
+        if (iAngle == -32768) return -32767;
         iAngle = -iAngle;
     }
     Int32 s = g_SinTable[0x40 + (iAngle >> 8)]
@@ -450,7 +454,6 @@ SNDSP1 *SNDSP1::GetInstance()
 void SNDSP1::Reset()
 {
     m_uSR           = (Uint8)(SR_DRC | SR_RQM);
-    m_uSrLowToggle  = 0;
     m_uDR           = 0x0080;
     m_uFsmState     = FSM_WAIT_CMD;
     m_uCommand      = 0;
@@ -874,9 +877,22 @@ void SNDSP1::Execute(Uint8 uCmd)
         C12 = (Int16)(C11 + C9 + C8);
 
         aux4 = C12;
-        refE = (Int16)(16 - refE);
-        if (refE >= 0) aux4 <<=  refE;
-        else           aux4 >>= -refE;
+        // Shift seguro: refE original esta tipicamente em [-15..-1],
+        // entao 16-refE pode chegar a 31.  Shift left de Int32 por
+        // valores >= 31 e' UB em C++ (na EE do PS2 com gcc 3.x devolve
+        // 0/lixo).  Aqui saturamos para evitar isso.
+        {
+            Int16 shift = (Int16)(16 - refE);
+            if (shift >= 0) {
+                if (shift >= 31) aux4 = 0;
+                else             aux4 <<= shift;
+            } else {
+                Int16 r = (Int16)(-shift);
+                if (r >= 31) aux4 = (aux4 < 0) ? -1 : 0;
+                else         aux4 >>= r;
+            }
+            refE = shift;  // mantem semantica original do refE
+        }
         if (aux4 == -1) aux4 = 0;
         aux4 >>= 1;
 
@@ -1045,10 +1061,12 @@ void SNDSP1::FsmStep(bool bRead, Uint8 &rData)
             ++m_uDataCounter;
             Uint16 nOut = g_CmdTable[m_uCommand & 0x3F].nOut;
             if (m_uDataCounter >= nOut) {
-                // Op0A em modo continuo: produz mais um conjunto de saidas
-                // se o ultimo DR escrito nao for 0x8000.
+                // Op0A em modo continuo: re-executa com Vs incrementado
+                // e enfileira proximo conjunto de saidas.  A interrupcao
+                // do stream e' tratada em WriteData(): qualquer escrita
+                // da CPU enquanto estamos aqui forca volta a WAIT_CMD.
                 Uint8 cmd = (Uint8)(m_uCommand & 0x3F);
-                if (cmd == 0x0A && m_uDR != 0x8000) {
+                if (cmd == 0x0A) {
                     m_InWords[0]++;
                     Execute(m_uCommand);
                     m_uDataCounter = 0;
@@ -1071,6 +1089,14 @@ void SNDSP1::FsmStep(bool bRead, Uint8 &rData)
 
 void SNDSP1::WriteData(Uint32 /*uAddr*/, Uint8 uData)
 {
+    // Stream-break para Op0A em modo continuo: qualquer escrita
+    // enquanto o DSP esta entregando matrizes Mode-7 e' interpretada
+    // como pedido de novo opcode pelo jogo.  Sem esse atalho o DSP
+    // ficaria preso emitindo An/Bn/Cn/Dn ad infinitum.
+    if (m_uFsmState == FSM_WRITE_DATA && (m_uCommand & 0x3F) == 0x0A) {
+        m_uFsmState = FSM_WAIT_CMD;
+        m_uSR      |= SR_DRC;
+    }
     Uint8 d = uData;
     FsmStep(false, d);
 }
@@ -1084,10 +1110,11 @@ Uint8 SNDSP1::ReadData(Uint32 /*uAddr*/)
 
 Uint8 SNDSP1::ReadStatus(Uint32 /*uAddr*/)
 {
-    // O chip apresenta SR como um registrador de 16 bits, mas so o byte
-    // alto carrega informacao.  Leituras alternadas devolvem o byte alto
-    // e em seguida zero (placeholder do byte baixo).
-    m_uSrLowToggle = (Uint8)~m_uSrLowToggle;
-    if (m_uSrLowToggle) return 0;
+    // SR e' lido pela CPU como um byte unico em $Bx:Cxxx (LoROM) /
+    // $0x:7xxx (HiROM).  Devolve sempre o byte alto que carrega
+    // RQM/DRC/DRS.  A versao antiga retornava 0 alternadamente
+    // (toggle "byte baixo") - isso punia o jogo a ver RQM=0 em
+    // metade das leituras, dessincronizando o handshake e fazendo
+    // Mario Kart desistir de bytes do DR.
     return m_uSR;
 }
