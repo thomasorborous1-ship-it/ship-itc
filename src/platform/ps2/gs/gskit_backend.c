@@ -187,8 +187,15 @@ void GSK_Init(int width, int height,
        appended at the tail of the DMA chain), so the clear is
        guaranteed visible by the time we return, but unlike
        gsKit_vsync_wait / gsKit_sync_flip it does not depend on the
-       PCRTC having entered a steady state yet. */
-    gsKit_clear(_pGsGlobal, GS_BLACK);
+       PCRTC having entered a steady state yet.
+
+       Color is passed as 0 (R=G=B=A=0 in RGBAQ format) instead of
+       the GS_BLACK macro: gsKit_clear takes a u64 RGBAQ color and
+       the macro is not defined in every gsKit branch we build
+       against (it was added later in upstream); 0 produces the same
+       black clear and matches what the original SNESticle pre-fork
+       code passed here. */
+    gsKit_clear(_pGsGlobal, 0);
     gsKit_queue_exec(_pGsGlobal);
     gsKit_finish();
 
