@@ -253,7 +253,17 @@ int main(int argc, char **argv)
 	     (void *)&__fileXio_fdman_path_ops);
 
 	DLog("[boot] init_memcard_driver: enter");
-	init_memcard_driver(true);
+	/* Pass false (was true) to skip the synchronous mcInit() inside
+	   ps2_drivers. With true, init_memcard_driver spins on
+	   sceSifBindRpc(0x80000400) waiting for sceMcMan to register —
+	   on real PS2 with the original BIOS sceMcMan and on top of the
+	   ps2_drivers-loaded mcman/mcserv this RPC ID can stay
+	   half-registered and the spin becomes infinite (see the
+	   detailed comment in src/platform/ps2/memcard/memcard.cpp).
+	   With false, the IRX modules are still loaded but the EE
+	   waits for the first save/load attempt to surface any actual
+	   issue as an fopen errno instead of a silent boot hang. */
+	init_memcard_driver(false);
 	DLog("[boot] init_memcard_driver: done");
 
 	DLog("[boot] init_usb_driver: enter");
@@ -343,7 +353,13 @@ int main(int argc, char **argv)
 		init_fileXio_driver();
 		__fileXioOpsInitializeImpl();
 		_ps2sdk_fileXio_init();
-		init_memcard_driver(true);
+		/* See the comment at the first init_memcard_driver() call
+		   above — synchronous mode (true) hangs in mcInit on real
+		   PS2 because the BIOS sceMcMan / sceMcServ stay registered
+		   alongside the ps2_drivers replacement modules and the
+		   SifBindRpc spin never resolves. Lazy init (false) is
+		   safe; the first save/load surfaces any actual problem. */
+		init_memcard_driver(false);
 		init_usb_driver();
 		init_cdfs_driver();
 		DLog("[boot] filesystem re-init done");

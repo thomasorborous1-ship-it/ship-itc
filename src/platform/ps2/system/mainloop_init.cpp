@@ -256,17 +256,26 @@ _SJPCMMix = new SJPCMMixBuffer(32000, TRUE);
     printf("MainLoopInit\n");
 	#endif
 
-	/* The original code does 120 * WaitForNextVRstart(1) here to let
-	   the GS settle. On NetherSX2 VBlank interrupts may or may not
-	   fire depending on what state the GS is in - if they don't, the
-	   120-iter loop becomes an infinite hang. Reduce to 1 iter and
-	   probe before/after so we can tell which side it died on. */
-BOOTLOG("[boot] WaitForNextVRstart begin (120 iters)\n");
-	{
-		int loop = 60 * 2;
-		while (loop--)
-			WaitForNextVRstart(1);
-	}
+	/* The original iaddis code did 120 * WaitForNextVRstart(1) here
+	   to "let the GS settle" — a 2-second spin on the
+	   syscall-installed VRcount counter. On real PS2 hardware the
+	   sequence right above (gsKit init + IOP module loads via
+	   _MainLoopLoadModules) sometimes ended with INTC #3 in a state
+	   where neither the iaddis hw.s handler nor the gsKit handler
+	   incremented their counter, so the loop went infinite and
+	   manifested as the boot freezing on the colourful-stripes
+	   frame from gsKit_init_screen.
+
+	   The picodrive PS2 port (irixxxx fork) does not have this
+	   spin at all — it just relies on the gsKit vsync semaphore
+	   (installed by GSK_Init) being signalled at least once before
+	   the first WaitSema. We do the same: a single GSK_WaitVsync()
+	   blocks until the handler fires, then proceeds. If the handler
+	   is wedged for any reason this still detects it (the call
+	   blocks forever instead of looping), but we no longer multiply
+	   the symptom by 120. */
+BOOTLOG("[boot] GSK_WaitVsync (single VBlank)\n");
+	GSK_WaitVsync();
 // create textures in main ram
     _fbTexture[0] = new CRenderSurface;
     _fbTexture[1] = new CRenderSurface;

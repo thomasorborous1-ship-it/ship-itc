@@ -49,8 +49,19 @@ void GSK_DrainAndWait(void);
 void GSK_FlushFrame(void);
 
 /* Wait for VBlank, swap framebuffers and reset draw queues. Must be
-   called once per frame, after GSK_FlushFrame. */
+   called once per frame, after GSK_FlushFrame.
+
+   Internally this no longer calls upstream gsKit_sync_flip (which
+   polls CSR.FIELD and is unreliable on real PS2 — see GSK_Init for
+   the rationale). Instead it does the DISPFB2 swap directly and
+   then blocks on a VBlank semaphore signalled by an INTC #3 handler
+   installed inside GSK_Init via gsKit_add_vsync_handler. */
 void GSK_SyncFlip(void);
+
+/* Block until the next VBlank IRQ. Equivalent to the second half of
+   GSK_SyncFlip without the buffer swap; useful for places that just
+   want to throttle (libpad init handshake, boot-time GS settle). */
+void GSK_WaitVsync(void);
 
 /* Emit FRAME_1 and XYOFFSET_1 register writes into gsKit's queue,
    pointing at the currently active draw buffer and restoring the

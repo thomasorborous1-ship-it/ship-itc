@@ -10,6 +10,7 @@
 #include <string.h>
 #include <assert.h>
 
+#include <kernel.h>
 #include <gsKit.h>
 #include <dmaKit.h>
 #include <gsInline.h>
@@ -33,6 +34,25 @@
 static GSGLOBAL *_pGsGlobal = NULL;
 static int       _gsk_initialised = 0;
 static int       _gsk_invalidate_pending = 0;
+
+/* picodrive-style VBlank handling: a semaphore that the VBlank IRQ
+   handler signals on every vsync. Frame code that wants to wait for
+   the next display refresh calls GSK_WaitVsync(), which drains any
+   stale signal and then WaitSema's on this semaphore. The handler is
+   installed via gsKit_add_vsync_handler() so it coexists cleanly with
+   any other INTC #3 chain entries (the legacy iaddis hw.s VRstart
+   handler stays in place, both increment their own state). */
+static int _gsk_vsync_sema_id = -1;
+static int _gsk_vsync_cb_id   = -1;
+
+static int _gsk_vsync_handler(int cause)
+{
+    (void)cause;
+    if (_gsk_vsync_sema_id >= 0)
+        iSignalSema(_gsk_vsync_sema_id);
+    ExitHandler();
+    return 0;
+}
 
 GSGLOBAL *GSK_GetGlobal(void)
 {
@@ -88,59 +108,42 @@ void GSK_Init(int width, int height,
                 D_CTRL_STD_OFF, D_CTRL_RCYC_8, 1 << DMA_CHANNEL_GIF);
     dmaKit_chan_init(DMA_CHANNEL_GIF);
 
+    /* Reset gsKit's VRAM allocator before init_screen so the
+       framebuffer / Z buffer / TexManager regions all start at the
+       very bottom of VRAM with no holes. picodrive's video_init does
+       the same call in the same place; without it gsKit_init_screen
+       inherits whatever CurrentPointer was left over from a previous
+       initialisation (relevant on hot-reload paths and on real PS2
+       hardware where the IOP reset does not zero EE-side state). */
+    gsKit_vram_clear(_pGsGlobal);
+
     gsKit_init_screen(_pGsGlobal);
 
-    /* gsKit_init_screen has already programmed DISPLAY1/2 with its
-       own auto-computed magnification (NTSC default DW=2880, DH=480
-       gives MagH=10, MagV=1 for a 256x240 framebuffer). The original
-       SNESticle pipeline used a different convention - 1x vertical
-       and ~10x horizontal magnification, with DW=2559 and DH=h-1 -
-       which yields a noticeably different visible aspect on real TV
-       and on emulators that decode DISPLAY1 strictly (NetherSX2
-       reports the picture as oversized).
+    /* PMODE / DISPLAY1 / DISPLAY2 are now left at the values that
+       gsKit_init_screen programmed (PMODE=0x8046 with CRTMD=1,
+       DISPLAY1/2 with gsKit's auto-computed magnification). The
+       previous code re-emitted those three registers with the
+       iaddis legacy layout (PMODE=0xFF61, DW=2560, MagV=0) to
+       work around a NetherSX2-only artefact, but that combination
+       puts the PCRTC in a non-standard mode (CRTMD=0, EN1=1,
+       EN2=0) that the real PS2 silicon does not handle the same
+       way as emulators - on real hardware the picture comes up
+       small in the centre with vertical-stripe garbage around it,
+       because gsKit_sync_flip only updates DISPFB2 and DISPFB1
+       (the only one being read with EN1=1, EN2=0) is left at its
+       initial value, breaking double buffering.
 
-       Re-emit DISPLAY1/2 with the legacy register layout so the
-       picture comes out at the same scale the iaddis original used.
-       gsKit does not touch DISPLAY1/2 again after init_screen, so
-       this stays in effect. */
-    {
-        int w = width  ? width  : 256;
-        int h = height ? height : 240;
-        u64 disp_reg = (((u64)((u64)(h - 1)) << 44) |
-                        ((u64)0x9FFULL << 32) |
-                        ((u64)(((2560 + w - 1) / w) - 1) << 23) |
-                        ((u64)(dispy & 0x7FF) << 12) |
-                        ((u64)(dispx * (2560 / w)) & 0xFFFULL));
-        *((volatile u64 *)0x12000080) = disp_reg; /* DISPLAY1 */
-        *((volatile u64 *)0x120000A0) = disp_reg; /* DISPLAY2 */
-        /* Keep gsGlobal's idea of the centre roughly aligned in case
-           a future caller of gsKit_set_display_offset uses it. */
-        _pGsGlobal->StartX = dispx * (2560 / w);
-        _pGsGlobal->StartY = dispy;
-        _pGsGlobal->MagH   = ((2560 + w - 1) / w) - 1;
-        _pGsGlobal->MagV   = 0;
-        _pGsGlobal->DW     = 2560;
-        _pGsGlobal->DH     = h;
-    }
+       picodrive and Open-PS2-Loader both let gsKit handle PMODE
+       and DISPLAY entirely, and both render correctly on real
+       PS2. We follow the same pattern.
 
-    /* Re-emit PMODE with the iaddis layout (0xFF61).
-       gsKit_init_screen unconditionally programs PMODE with
-       EN1=0, EN2=1, CRTMD=1, MMOD=0, AMOD=1, SLBG=0, ALP=0x80
-       which yields 0x8046. On NetherSX2 (Patched) and other strict
-       emulators, CRTMD=1 combined with our 256x240 framebuffer
-       layout produces the same vertical-stripe / partial-frame
-       readout artefact that PR #41 fixed pre-gsKit-migration by
-       forcing PMODE=0xFF61 in GS_SetDispMode. The gsKit migration
-       removed the explicit GS_PMODE = 0xFF61 write in gs.c, which
-       silently reintroduced that regression.
-
-       0xFF61 layout: EN1=1, EN2=0, CRTMD=0, MMOD=1, AMOD=1, SLBG=0,
-       ALP=0xFF - i.e. Read Circuit 1 reads DISPFB1 with ALP=255
-       (full opacity on RC1's output), CRTMD=0 (real-PS2-silicon
-       friendly), no SLBG. gsKit sets DISPFB1 and DISPFB2 to the
-       same gsKit-managed framebuffer base, so flipping EN1<->EN2
-       does not change which texels reach the CRTC. */
-    *((volatile u64 *)0x12000000) = 0xFF61ULL; /* PMODE */
+       If the NetherSX2 visual issue resurfaces, gate the override
+       behind a build flag (e.g. -DBUILD_FOR_NETHERSX2=1) instead
+       of penalising real hardware. */
+    (void)dispx;
+    (void)dispy;
+    (void)width;
+    (void)height;
 
     /* COLCLAMP is re-emitted every frame in GSK_ResetFrame (see
        comment there). The original iaddis pipeline (gs.c) set
@@ -155,15 +158,39 @@ void GSK_Init(int width, int height,
     gsKit_TexManager_init(_pGsGlobal);
     gsKit_mode_switch(_pGsGlobal, GS_ONESHOT);
 
-    /* Clear both buffers so the screen starts black. */
-    gsKit_clear(_pGsGlobal, 0);
+    /* Install the gsKit-side VBlank handler now that the GS is
+       producing a video signal. Done before the initial clear so
+       the very first GSK_SyncFlip() that follows can wait for VBlank
+       through the semaphore path instead of polling CSR.FIELD (which
+       on real PS2 takes a couple of refreshes to start updating
+       reliably after init_screen). picodrive's video_init does the
+       equivalent call in the same place. */
+    if (_gsk_vsync_sema_id < 0) {
+        ee_sema_t s;
+        s.init_count = 0;
+        s.max_count  = 1;
+        s.option     = 0;
+        s.attr       = 0;
+        _gsk_vsync_sema_id = CreateSema(&s);
+        _gsk_vsync_cb_id   = gsKit_add_vsync_handler(_gsk_vsync_handler);
+    }
+
+    /* Single clear is enough — the previous code did this twice with a
+       sync_flip in between to "settle" the GS, but the second clear
+       was painting the same buffer that gsKit_init_screen had already
+       allocated and zero-cleared via the FRAME register write. The
+       extra sync_flip on real PS2 hangs because gsKit_sync_flip polls
+       CSR.FIELD (bit 13 of GS_CSR at 0x12001000) and that bit takes a
+       handful of refreshes to start toggling after init_screen — long
+       enough for boot to look frozen with garbage on screen.
+       gsKit_finish() waits for the GIF FINISH IRQ (which queue_exec
+       appended at the tail of the DMA chain), so the clear is
+       guaranteed visible by the time we return, but unlike
+       gsKit_vsync_wait / gsKit_sync_flip it does not depend on the
+       PCRTC having entered a steady state yet. */
+    gsKit_clear(_pGsGlobal, GS_BLACK);
     gsKit_queue_exec(_pGsGlobal);
     gsKit_finish();
-    gsKit_sync_flip(_pGsGlobal);
-    gsKit_clear(_pGsGlobal, 0);
-    gsKit_queue_exec(_pGsGlobal);
-    gsKit_finish();
-    gsKit_sync_flip(_pGsGlobal);
 
     _gsk_initialised = 1;
 }
@@ -206,11 +233,43 @@ void GSK_FlushFrame(void)
 
 void GSK_SyncFlip(void)
 {
-    if (!_gsk_initialised) {
+    GSGLOBAL *gs = _pGsGlobal;
+
+    if (!_gsk_initialised || !gs) {
         return;
     }
 
-    gsKit_sync_flip(_pGsGlobal);
+    /* picodrive-style frame swap: the actual DISPFB2 update is done
+       here without spinning on CSR.FIELD (which is what the upstream
+       gsKit_sync_flip does and which is unreliable on real PS2 — see
+       GSK_Init for the long version). The VBlank wait is decoupled
+       and runs on a semaphore signalled by _gsk_vsync_handler. */
+    if (!gs->FirstFrame && gs->DoubleBuffering == GS_SETTING_ON) {
+        GS_SET_DISPFB2(gs->ScreenBuffer[gs->ActiveBuffer & 1] / 8192,
+                       gs->Width / 64, gs->PSM, 0, 0);
+        gs->ActiveBuffer ^= 1;
+    }
+
+    gsKit_setactive(gs);
+
+    /* Wait for the next VBlank IRQ so the user does not see partially
+       drawn frames and so we throttle to 60Hz / 50Hz. PollSema drains
+       a stale signal first (in case the previous frame already raised
+       VBlank between the last WaitSema and this one), then WaitSema
+       blocks until the handler fires next. */
+    if (_gsk_vsync_sema_id >= 0) {
+        PollSema(_gsk_vsync_sema_id);
+        WaitSema(_gsk_vsync_sema_id);
+    }
+}
+
+void GSK_WaitVsync(void)
+{
+    if (_gsk_vsync_sema_id < 0) {
+        return;
+    }
+    PollSema(_gsk_vsync_sema_id);
+    WaitSema(_gsk_vsync_sema_id);
 }
 
 void GSK_ResetFrame(void)
