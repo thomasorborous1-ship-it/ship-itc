@@ -1,5 +1,6 @@
 #include <stdio.h>
 #include <string.h>
+#include <unistd.h>
 
 #include "libpad.h"
 #include "libxpad.h"
@@ -49,18 +50,49 @@ static int _Input_GetPadState(int port, int slot)
     return padGetState(port, slot);
 }
 
+/* Wait until the pad finishes its libpad initialisation handshake.
+ *
+ * Original implementation used WaitForNextVRstart(1) between polls,
+ * which depends on the iaddis hw.s INTC #3 (VBlank Start) handler
+ * incrementing a counter. The gsKit migration installs its own INTC
+ * #3 handler via gsKit_add_vsync_handler. Depending on the order in
+ * which the two handlers end up registered on the actual chip, the
+ * iaddis counter can stop being incremented and WaitForNextVRstart
+ * spins forever -- which manifested as boot stalls and as the pad
+ * "not responding" on real PS2 hardware while emulators (PCSX2 /
+ * NetherSX2) booted fine because their INTC chaining happens to keep
+ * both handlers happy.
+ *
+ * The picodrive PS2 port (irixxxx fork) avoids this whole class of
+ * problems by polling padGetState() with a plain usleep() between
+ * tries plus a hard timeout, which is independent of any vsync /
+ * interrupt handler. Mirror that approach here.
+ *
+ * Exit conditions:
+ *   - PAD_STATE_STABLE   : pad finished init, ready to read
+ *   - PAD_STATE_DISCONN  : no pad on this port/slot, give up
+ *   - timeout (~5s)      : pad never settled, give up rather than
+ *                          freezing the whole boot
+ *
+ * Note: the previous code also exited on PAD_STATE_FINDCTP1, which is
+ * an *intermediate* state ("finding controller type, pass 1") -- the
+ * pad is still negotiating. Treating it as "ready" causes subsequent
+ * padRead() calls to return zero buttons even with the pad connected,
+ * which is consistent with the "menu shows up but controller does not
+ * respond" symptom on CRT (Yamark).
+ */
 static void _Input_WaitPadReady(int port, int slot)
 {
     int ret;
+    int tm = 50; /* 50 * 100ms = 5s upper bound */
 
     do
     {
         ret = _Input_GetPadState(port, slot);
-        WaitForNextVRstart(1);
-    }
-    while ((ret != PAD_STATE_STABLE) &&
-           (ret != PAD_STATE_FINDCTP1) &&
-           (ret != PAD_STATE_DISCONN));
+        if (ret == PAD_STATE_STABLE || ret == PAD_STATE_DISCONN)
+            break;
+        usleep(100 * 1000);
+    } while (--tm > 0);
 }
 
 static int _Input_InitPad(int port, int slot, void *buffer)
@@ -213,12 +245,23 @@ void InputPoll(void)
         state = _Input_GetPadState(_Input_PadPort[iPad][0],
                                    _Input_PadPort[iPad][1]);
 
-        if ((state == PAD_STATE_STABLE) || (state == PAD_STATE_FINDCTP1))
+        /* Only PAD_STATE_STABLE means "ready to read". The previous
+           code also accepted PAD_STATE_FINDCTP1, but that is an
+           intermediate init state and padRead() returns no useful
+           data for it -- which led to the "controller is detected
+           but does not respond" symptom on real PS2.
+
+           For freshly inserted pads we no longer call
+           WaitForNextVRstart(): it conflicts with the gsKit vsync
+           handler on real hardware (same root cause that was already
+           patched in the boot path) and is unnecessary here, since
+           the next InputPoll() call -- which happens once per frame
+           anyway -- will retry. */
+        if (state == PAD_STATE_STABLE)
         {
             if (_Input_bPadConnected[iPad] == 0)
             {
                 printf("Input: Pad %d inserted!\n", iPad + 1);
-                WaitForNextVRstart(1);
             }
 
             _Input_bPadConnected[iPad] = 1;
